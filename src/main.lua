@@ -14,8 +14,10 @@
 --       modutil     = modutil,
 --   })
 --
--- Framework.init can be called on every hot reload. GUI callbacks are registered
--- once per packId; subsequent calls update subsystem instances in place.
+-- Framework.init can be called on every hot reload; subsequent calls update subsystem
+-- instances in place. GUI registration is the coordinator's responsibility:
+--   rom.gui.add_imgui(Framework.getRenderer(packId))
+--   rom.gui.add_to_menu_bar(Framework.getMenuBar(packId))
 
 local mods = rom.mods
 mods['SGG_Modding-ENVY'].auto()
@@ -30,19 +32,19 @@ import 'hud.lua'
 import 'ui.lua'
 
 -- =============================================================================
--- REGISTRATION STATE (module-level; survives hot reloads)
+-- PACK STATE (module-level; survives hot reloads for late-binding)
 -- =============================================================================
 
-local _registered = {} -- packId -> true  (GUI registration guard)
-local _packs      = {} -- packId -> { ui, hud, _index }
-local _packList   = {} -- ordered list of packIds for HUD Y-offset stacking
+local _packs    = {} -- packId -> { ui, hud, _index }
+local _packList = {} -- ordered list of packIds for HUD Y-offset stacking
 
 -- =============================================================================
 -- FRAMEWORK.INIT
 -- =============================================================================
 
 --- Initialize (or reinitialize) a modpack coordinator.
---- Safe to call on every hot reload — GUI callbacks are registered only once per packId.
+--- Safe to call on every hot reload. GUI registration is the coordinator's responsibility —
+--- use Framework.getRenderer(packId) and Framework.getMenuBar(packId) to get stable callbacks.
 ---
 --- @param params table
 ---   params.packId      string  — discovery filter + HUD component name scoping
@@ -80,18 +82,6 @@ function Framework.init(params)
     -- Store instances — overwrites on reload; GUI callbacks use late binding
     _packs[params.packId] = { discovery = discovery, hash = hash, hud = hud, ui = ui, _index = packIndex }
 
-    -- Register GUI once per packId (guard against hot reload double-registration)
-    if not _registered[params.packId] then
-        _registered[params.packId] = true
-        local packId = params.packId
-        rom.gui.add_imgui(function()
-            _packs[packId].ui.renderWindow() -- late binding: picks up new instance after reload
-        end)
-        rom.gui.add_to_menu_bar(function()
-            _packs[packId].ui.addMenuBar()
-        end)
-    end
-
     if params.config.ModEnabled then
         hud.setModMarker(true)
     end
@@ -99,4 +89,16 @@ function Framework.init(params)
     return _packs[params.packId]
 end
 
-public = Framework
+public.init = Framework.init
+
+--- Returns a stable imgui render callback for the given packId.
+--- Call once at startup; the callback late-binds to the current pack instance.
+public.getRenderer = function(packId)
+    return function() _packs[packId].ui.renderWindow() end
+end
+
+--- Returns a stable menu bar callback for the given packId.
+--- Call once at startup; the callback late-binds to the current pack instance.
+public.getMenuBar = function(packId)
+    return function() _packs[packId].ui.addMenuBar() end
+end
