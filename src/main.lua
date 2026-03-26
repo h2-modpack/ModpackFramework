@@ -57,6 +57,10 @@ local _packList = {} -- ordered list of packIds for HUD Y-offset stacking
 function Framework.init(params)
     local lib = rom.mods['adamant-Modpack_Lib']
 
+    -- Register coordinator with lib so modules can resolve packId → config
+    -- without coupling to Thunderstore mod IDs.
+    lib.registerCoordinator(params.packId, params.config)
+
     -- Make game globals available to all subsystem closures (SetupRunData, etc.)
     import_as_fallback(rom.game)
 
