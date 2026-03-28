@@ -5,7 +5,7 @@
 --
 -- Usage (from a coordinator mod's main.lua):
 --
---   local Framework = rom.mods['adamant-Modpack_Framework']
+--   local Framework = rom.mods['adamant-ModpackFramework']
 --   Framework.init({
 --       packId      = "h2-modpack",
 --       windowTitle = "Speedrun Modpack",
@@ -55,7 +55,7 @@ local _packList = {} -- ordered list of packIds for HUD Y-offset stacking
 ---
 --- @return table pack  — { discovery, hash, hud, ui, _index }
 function Framework.init(params)
-    local lib = rom.mods['adamant-Modpack_Lib']
+    local lib = rom.mods['adamant-ModpackLib']
 
     -- Register coordinator with lib so modules can resolve packId → config
     -- without coupling to Thunderstore mod IDs.

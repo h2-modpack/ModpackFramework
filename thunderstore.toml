@@ -4,17 +4,17 @@ schemaVersion = "0.0.1"
 
 [package]
 namespace = "adamant"
-name = "Modpack_Framework"
+name = "ModpackFramework"
 versionNumber = "1.0.0"
 description = "Reusable modpack framework: discovery, hash, HUD, and UI. Used by modpack coordinators."
-websiteUrl = "https://github.com/h2-modpack/adamant-modpack-Framework"
+websiteUrl = "https://github.com/h2-modpack/ModpackFramework"
 containsNsfwContent = false
 
 [package.dependencies]
 Hell2Modding-Hell2Modding = "1.0.78"
 LuaENVY-ENVY = "1.2.0"
 SGG_Modding-ModUtil = "4.0.1"
-adamant-Modpack_Lib = "1.0.0"
+adamant-ModpackLib = "1.0.0"
 
 
 [build]
