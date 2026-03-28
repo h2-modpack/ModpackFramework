@@ -7,7 +7,7 @@
 --
 --   local Framework = rom.mods['adamant-ModpackFramework']
 --   Framework.init({
---       packId      = "h2-modpack",
+--       packId      = "speedrun",
 --       windowTitle = "Speedrun Modpack",
 --       config      = config,    -- coordinator's Chalk config
 --       def         = def,       -- { NUM_PROFILES, defaultProfiles }
