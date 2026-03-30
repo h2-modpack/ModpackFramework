@@ -105,6 +105,8 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local importFeedback = nil
     local importFeedbackColor = nil
     local importFeedbackTime = nil
+    local categoryStatusCache = {}
+    local categoryStatusDirty = {}
 
     local FEEDBACK_DURATION = 2.0
     local function SetImportFeedback(text, color)
@@ -116,6 +118,16 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local function InvalidateHash()
         cachedHash = nil
         cachedFingerprint = nil
+    end
+
+    local function InvalidateCategoryStatus(category)
+        if category then
+            categoryStatusDirty[category] = true
+            return
+        end
+        for key in pairs(categoryStatusCache) do
+            categoryStatusDirty[key] = true
+        end
     end
 
     local function GetCachedHash()
@@ -162,6 +174,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             SetupRunData()
         end
         InvalidateHash()
+        InvalidateCategoryStatus(module.category)
         hud.updateHash()
     end
 
@@ -199,6 +212,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             SetupRunData()
             SnapshotToStaging()
             InvalidateHash()
+            InvalidateCategoryStatus()
             slotLabelsDirty = true
             hud.updateHash()
             return true
@@ -207,8 +221,19 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     end
 
     local function GetCategoryStatus(category)
+        if categoryStatusDirty[category] ~= true and categoryStatusCache[category] then
+            local cached = categoryStatusCache[category]
+            return cached.text, cached.color, cached.hasEntries
+        end
+
         local modules = discovery.byCategory[category] or {}
         if #modules == 0 then
+            categoryStatusCache[category] = {
+                text = "N/A",
+                color = colors.textDisabled,
+                hasEntries = false,
+            }
+            categoryStatusDirty[category] = false
             return "N/A", colors.textDisabled, false
         end
 
@@ -219,11 +244,29 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         end
 
         if hasEnabled and not hasDisabled then
+            categoryStatusCache[category] = {
+                text = "All Enabled",
+                color = colors.success,
+                hasEntries = true,
+            }
+            categoryStatusDirty[category] = false
             return "All Enabled", colors.success, true
         end
         if hasDisabled and not hasEnabled then
+            categoryStatusCache[category] = {
+                text = "All Disabled",
+                color = colors.error,
+                hasEntries = true,
+            }
+            categoryStatusDirty[category] = false
             return "All Disabled", colors.error, true
         end
+        categoryStatusCache[category] = {
+            text = "Mixed Configuration",
+            color = colors.mixed,
+            hasEntries = true,
+        }
+        categoryStatusDirty[category] = false
         return "Mixed Configuration", colors.mixed, true
     end
 
@@ -241,6 +284,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             SetupRunData()
         end
         InvalidateHash()
+        InvalidateCategoryStatus(category)
         hud.updateHash()
     end
 
