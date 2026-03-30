@@ -72,7 +72,8 @@ Key handlers:
 | `ToggleSpecial(special, val)` | Enable or disable a special module |
 | `SetModuleState(module, state)` | Game-side only apply or revert |
 | `LoadProfile(hash)` | Apply a hash string to all modules and refresh staging |
-| `SetBugFixes(val)` | Bulk toggle all modules in the `Bug Fixes` category |
+| `setCategoryEnabled(category, val)` | Bulk toggle all regular modules in a category |
+| `getCategoryStatus(category)` | Return category status text/color/exists for coordinator quick-setup UI |
 
 Special-module rendering contract:
 - Framework passes `public.specialState` into `DrawTab(ui, specialState, theme)` and `DrawQuickContent(ui, specialState, theme)`
@@ -118,7 +119,7 @@ Tests use the individual factory functions directly with mocks rather than requi
 ## Guidelines
 
 - Never rename `definition.id` or `field.configKey` after release; these are hash keys
-- `Bug Fixes` is a reserved category string used by Quick Setup bulk toggle logic
+- Coordinator-specific Quick Setup UI belongs in `def.renderQuickSetup(ctx)`, not in Framework
 - All module apply/revert calls go through `pcall`; use `lib.warn(...)` for framework errors, never crash
 - Regular-module UI reads from Framework staging, not Chalk
 - Special-module UI reads from `public.specialState.view` and mutates via `public.specialState.set/update/toggle`

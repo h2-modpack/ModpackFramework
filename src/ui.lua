@@ -55,7 +55,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         for _, m in ipairs(discovery.modulesWithOptions) do
             staging.options[m.id] = staging.options[m.id] or {}
             for _, opt in ipairs(m.options) do
-                staging.options[m.id][opt.configKey] = discovery.getOptionValue(m, opt.configKey)
+                if opt.configKey ~= nil then
+                    staging.options[m.id][opt.configKey] = discovery.getOptionValue(m, opt.configKey)
+                end
             end
         end
 
@@ -104,11 +106,6 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local importFeedbackColor = nil
     local importFeedbackTime = nil
 
-    -- Bug fix status cache
-    local bugFixStatusText = ""
-    local bugFixStatusColor = colors.textDisabled
-    local bugFixStatusDirty = true
-
     local FEEDBACK_DURATION = 2.0
     local function SetImportFeedback(text, color)
         importFeedback = text
@@ -141,32 +138,6 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         slotLabelsDirty = false
     end
 
-    local function RebuildBugFixStatus()
-        local modules = discovery.byCategory["Bug Fixes"] or {}
-        if #modules == 0 then
-            bugFixStatusText = "N/A"
-            bugFixStatusColor = colors.textDisabled
-            bugFixStatusDirty = false
-            return
-        end
-        local hasEnabled = false
-        local hasDisabled = false
-        for _, m in ipairs(modules) do
-            if staging.modules[m.id] then hasEnabled = true else hasDisabled = true end
-        end
-        if hasEnabled and not hasDisabled then
-            bugFixStatusText = "All Enabled"
-            bugFixStatusColor = colors.success
-        elseif hasDisabled and not hasEnabled then
-            bugFixStatusText = "All Disabled"
-            bugFixStatusColor = colors.error
-        else
-            bugFixStatusText = "Mixed Configuration"
-            bugFixStatusColor = colors.mixed
-        end
-        bugFixStatusDirty = false
-    end
-
     -- =============================================================================
     -- TOGGLE HELPERS (event handlers — OK to touch Chalk here)
     -- =============================================================================
@@ -191,7 +162,6 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             SetupRunData()
         end
         InvalidateHash()
-        bugFixStatusDirty = true
         hud.updateHash()
     end
 
@@ -215,6 +185,10 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local function ToggleSpecial(special, enabled)
         staging.specials[special.modName] = enabled
         discovery.setSpecialEnabled(special, enabled)
+        SetModuleState(special, enabled)
+        if special.definition.dataMutation then
+            SetupRunData()
+        end
         InvalidateHash()
         hud.updateHash()
     end
@@ -225,7 +199,6 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             SetupRunData()
             SnapshotToStaging()
             InvalidateHash()
-            bugFixStatusDirty = true
             slotLabelsDirty = true
             hud.updateHash()
             return true
@@ -233,17 +206,55 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         return false
     end
 
-    local function SetBugFixes(flag)
-        local modules = discovery.byCategory["Bug Fixes"] or {}
+    local function GetCategoryStatus(category)
+        local modules = discovery.byCategory[category] or {}
+        if #modules == 0 then
+            return "N/A", colors.textDisabled, false
+        end
+
+        local hasEnabled = false
+        local hasDisabled = false
+        for _, m in ipairs(modules) do
+            if staging.modules[m.id] then hasEnabled = true else hasDisabled = true end
+        end
+
+        if hasEnabled and not hasDisabled then
+            return "All Enabled", colors.success, true
+        end
+        if hasDisabled and not hasEnabled then
+            return "All Disabled", colors.error, true
+        end
+        return "Mixed Configuration", colors.mixed, true
+    end
+
+    local function SetCategoryEnabled(category, flag)
+        local modules = discovery.byCategory[category] or {}
+        local touchedDataMutation = false
         for _, m in ipairs(modules) do
             staging.modules[m.id] = flag
             discovery.setModuleEnabled(m, flag)
+            if m.definition.dataMutation then
+                touchedDataMutation = true
+            end
         end
-        SetupRunData()
+        if touchedDataMutation then
+            SetupRunData()
+        end
         InvalidateHash()
-        bugFixStatusDirty = true
         hud.updateHash()
     end
+
+    local quickSetupContext = {
+        ui                = ui,
+        colors            = colors,
+        theme             = theme,
+        drawColoredText   = DrawColoredText,
+        getCategoryStatus = GetCategoryStatus,
+        setCategoryEnabled = SetCategoryEnabled,
+        getCategoryModules = function(category)
+            return discovery.byCategory[category] or {}
+        end,
+    }
 
     local defaultProfiles = def.defaultProfiles
 
@@ -276,13 +287,22 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                             ui.Indent()
                             local opts = staging.options[m.id] or {}
                             for _, opt in ipairs(m.options) do
-                                ui.PushID(opt._pushId)
-                                local newVal, newChg = lib.drawField(ui, opt, opts[opt.configKey],
-                                    ui.GetWindowWidth() * FIELD_MEDIUM)
-                                if newChg then
-                                    ChangeOption(m, opt.configKey, newVal)
+                                if lib.isFieldVisible(opt, opts) then
+                                    ui.PushID(opt._pushId)
+                                    if opt.indent then
+                                        ui.Indent()
+                                    end
+                                    local currentValue = opt.configKey and opts[opt.configKey] or nil
+                                    local newVal, newChg = lib.drawField(ui, opt, currentValue,
+                                        ui.GetWindowWidth() * FIELD_MEDIUM)
+                                    if newChg and opt.configKey then
+                                        ChangeOption(m, opt.configKey, newVal)
+                                    end
+                                    if opt.indent then
+                                        ui.Unindent()
+                                    end
+                                    ui.PopID()
                                 end
-                                ui.PopID()
                             end
                             ui.Unindent()
                         end
@@ -322,6 +342,11 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         local specialState = special.mod.specialState
         if specialState.isDirty() then
             specialState.flushToConfig()
+            if special.definition.dataMutation and staging.specials[special.modName] then
+                SetModuleState(special, false)
+                SetModuleState(special, true)
+                SetupRunData()
+            end
             InvalidateHash()
             hud.updateHash()
             return true
@@ -395,21 +420,8 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         ui.Separator()
         ui.Spacing()
 
-        -- Bug fix bulk toggles
-        if discovery.byCategory["Bug Fixes"] then
-            DrawColoredText(colors.info, "Toggle all bug fixes at once. Go to the Bug Fixes tab for individual control.")
-            if bugFixStatusDirty then RebuildBugFixStatus() end
-            DrawColoredText(colors.text, "Current Status: ")
-            ui.SameLine()
-            DrawColoredText(bugFixStatusColor, bugFixStatusText)
-            ui.Spacing()
-
-            if ui.Button("Enable All") then SetBugFixes(true) end
-            ui.SameLine()
-            if ui.Button("Disable All") then SetBugFixes(false) end
-
-            ui.Separator()
-            ui.Spacing()
+        if type(def.renderQuickSetup) == "function" then
+            def.renderQuickSetup(quickSetupContext)
         end
 
         -- Quick content from special modules

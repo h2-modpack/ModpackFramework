@@ -145,6 +145,7 @@ function Framework.createHash(discovery, config, lib, packId)
         -- Inline option values (omit if matches field default)
         for _, m in ipairs(discovery.modulesWithOptions) do
             for _, opt in ipairs(m.options) do
+                if opt.type ~= "separator" and opt.configKey ~= nil then
                 local current
                 if source then
                     current = source.options and source.options[m.id]
@@ -155,6 +156,7 @@ function Framework.createHash(discovery, config, lib, packId)
                 end
                 if current ~= opt.default then
                     kv[m.id .. "." .. KeyStr(opt.configKey)] = EncodeValue(opt, current)
+                end
                 end
             end
         end
@@ -231,11 +233,13 @@ function Framework.createHash(discovery, config, lib, packId)
         -- Inline option values
         for _, m in ipairs(discovery.modulesWithOptions) do
             for _, opt in ipairs(m.options) do
-                local stored = kv[m.id .. "." .. KeyStr(opt.configKey)]
-                if stored ~= nil then
-                    discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored))
-                else
-                    discovery.setOptionValue(m, opt.configKey, opt.default)
+                if opt.type ~= "separator" and opt.configKey ~= nil then
+                    local stored = kv[m.id .. "." .. KeyStr(opt.configKey)]
+                    if stored ~= nil then
+                        discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored))
+                    else
+                        discovery.setOptionValue(m, opt.configKey, opt.default)
+                    end
                 end
             end
         end
