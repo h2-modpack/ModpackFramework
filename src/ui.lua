@@ -380,13 +380,22 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local function BuildTabList()
         if cachedTabList then return cachedTabList end
         cachedTabList = { "Quick Setup" }
-        -- Special module tabs
-        for _, special in ipairs(discovery.specials) do
-            table.insert(cachedTabList, special._tabLabel)
-        end
-        -- Category tabs
-        for _, cat in ipairs(discovery.categories) do
-            table.insert(cachedTabList, cat.label)
+        local sidebarOrder = def and def.sidebarOrder or "special-first"
+        if sidebarOrder == "category-first" then
+            for _, cat in ipairs(discovery.categories) do
+                table.insert(cachedTabList, cat.label)
+            end
+            for _, special in ipairs(discovery.specials) do
+                table.insert(cachedTabList, special._tabLabel)
+            end
+        else
+            -- Default: special tabs before regular category tabs.
+            for _, special in ipairs(discovery.specials) do
+                table.insert(cachedTabList, special._tabLabel)
+            end
+            for _, cat in ipairs(discovery.categories) do
+                table.insert(cachedTabList, cat.label)
+            end
         end
         table.insert(cachedTabList, "Profiles")
         table.insert(cachedTabList, "Dev")
@@ -484,7 +493,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             if staging.specials[special.modName] and special.mod.DrawQuickContent then
                 ui.Separator()
                 ui.Spacing()
-                local debugEnabled = discovery.isDebugEnabled(special)
+                local debugEnabled = lib.isSpecialStateValidationEnabled(special.mod.config)
                 local preDrawConfig = debugEnabled and lib.captureSpecialConfigSnapshot(special.mod.config, special.stateSchema)
                 special.mod.DrawQuickContent(ui, special.mod.specialState, theme)
                 if debugEnabled then WarnIfSpecialBypassedState(special, preDrawConfig) end
@@ -510,7 +519,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
         -- Delegate tab content to the module
         if special.mod.DrawTab then
-            local debugEnabled = discovery.isDebugEnabled(special)
+            local debugEnabled = lib.isSpecialStateValidationEnabled(special.mod.config)
             local preDrawConfig = debugEnabled and lib.captureSpecialConfigSnapshot(special.mod.config, special.stateSchema)
             special.mod.DrawTab(ui, special.mod.specialState, theme)
             if debugEnabled then WarnIfSpecialBypassedState(special, preDrawConfig) end
@@ -717,6 +726,12 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             ui.SetTooltip(
             "Print lib-internal diagnostic warnings (schema errors, unknown field types). Shared across all packs.")
         end
+
+        lib.drawSpecialStateValidationToggle(
+            ui,
+            nil,
+            "Special State Validation"
+        )
 
         ui.Spacing()
         ui.Separator()

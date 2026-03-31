@@ -77,7 +77,11 @@ function Framework.init(params)
     local theme     = Framework.createTheme()
 
     -- Discovery must run before createHud so GetConfigHash has modules to read
-    discovery.run(params.def and params.def.groupStyle, params.def and params.def.groupStyleDefault)
+    discovery.run(
+        params.def and params.def.groupStyle,
+        params.def and params.def.groupStyleDefault,
+        params.def and params.def.categoryOrder
+    )
 
     local hud             = Framework.createHud(params.packId, packIndex, hash, theme, params.config, params.modutil)
     local ui              = Framework.createUI(discovery, hud, theme, params.def, params.config, lib, params.packId,
@@ -100,6 +104,11 @@ public.GroupStyle = {
     COLLAPSING = "collapsing", -- collapsing header (default)
     SEPARATOR  = "separator",  -- labeled section header + separator line, always visible
     FLAT       = "flat",       -- no header, items rendered directly
+}
+
+public.SidebarOrder = {
+    SPECIAL_FIRST  = "special-first",
+    CATEGORY_FIRST = "category-first",
 }
 
 --- Returns a stable imgui render callback for the given packId.

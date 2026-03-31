@@ -27,7 +27,7 @@ function Framework.createDiscovery(packId, config, lib)
     -- DISCOVERY
     -- -------------------------------------------------------------------------
 
-    function Discovery.run(groupStyle, groupStyleDefault)
+    function Discovery.run(groupStyle, groupStyleDefault, categoryOrder)
         local mods = rom.mods
 
         -- Collect all opted-in modules
@@ -147,8 +147,31 @@ function Framework.createDiscovery(packId, config, lib)
             end
         end
 
-        -- Sort categories alphabetically for consistent sidebar ordering
-        table.sort(Discovery.categories, function(a, b) return a.label < b.label end)
+        -- Sort categories alphabetically by default; coordinators can optionally
+        -- force specific categories to the front via def.categoryOrder.
+        local categoryRank = {}
+        if type(categoryOrder) == "table" then
+            for index, category in ipairs(categoryOrder) do
+                if type(category) == "string" then
+                    categoryRank[category] = index
+                end
+            end
+        end
+
+        table.sort(Discovery.categories, function(a, b)
+            local aRank = categoryRank[a.key]
+            local bRank = categoryRank[b.key]
+            if aRank and bRank then
+                return aRank < bRank
+            end
+            if aRank then
+                return true
+            end
+            if bRank then
+                return false
+            end
+            return a.label < b.label
+        end)
 
         -- Build UI layouts
         for _, cat in ipairs(Discovery.categories) do
