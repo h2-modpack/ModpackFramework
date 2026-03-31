@@ -155,7 +155,7 @@ function Framework.createHash(discovery, config, lib, packId)
                     current = discovery.getOptionValue(m, opt.configKey)
                 end
                 if current ~= opt.default then
-                    kv[opt._hashKey] = EncodeValue(opt, current)
+                    kv[opt._hashKey or (m.id .. "." .. opt.configKey)] = EncodeValue(opt, current)
                 end
                 end
             end
@@ -234,7 +234,7 @@ function Framework.createHash(discovery, config, lib, packId)
         for _, m in ipairs(discovery.modulesWithOptions) do
             for _, opt in ipairs(m.options) do
                 if opt.type ~= "separator" and opt.configKey ~= nil then
-                    local stored = kv[opt._hashKey]
+                    local stored = kv[opt._hashKey or (m.id .. "." .. opt.configKey)]
                     if stored ~= nil then
                         discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored))
                     else
