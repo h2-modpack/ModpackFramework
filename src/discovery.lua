@@ -51,6 +51,10 @@ function Framework.createDiscovery(packId, config, lib)
             local mod     = entry.mod
             local def     = entry.def
 
+            if type(mod.config) == "table" then
+                lib.prepareConfigBackend(mod.config)
+            end
+
             if def.special then
                 if not def.name or not def.apply or not def.revert then
                     lib.warn(packId, config.DebugMode,

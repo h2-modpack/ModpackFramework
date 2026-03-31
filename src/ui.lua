@@ -484,6 +484,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                     specialState = special.mod.specialState,
                     theme = theme,
                     draw = special.mod.DrawQuickContent,
+                    -- Quick Setup can render multiple specials per frame; keep the
+                    -- expensive direct-config-write detector scoped to full special tabs.
+                    validateEnabled = false,
                     onFlushed = function()
                         OnSpecialStateFlushed(special)
                     end,
