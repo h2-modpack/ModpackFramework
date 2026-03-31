@@ -16,7 +16,7 @@ src/
 
 Each sub-file exposes one factory function on the `Framework` table. `Framework.init` wires them together, handles coordinator registration through Lib, and returns the pack table. Factory params replace the old global `Core.*` style; state is closed over, not shared.
 
-Coordinators own their Chalk config, `def` (`NUM_PROFILES`, `defaultProfiles`), and `packId`. Framework owns discovery, hash, HUD, and the shared UI.
+Coordinators own their Chalk config, `def` (`NUM_PROFILES`, `defaultProfiles`, `groupStyle`, `groupStyleDefault`, `renderQuickSetup`), and `packId`. Framework owns discovery, hash, HUD, and the shared UI.
 
 ## Key systems
 
@@ -30,6 +30,15 @@ Auto-discovers all installed modules that opt in via `definition.modpack = packI
 - Modules are sorted alphabetically by display name; categories and groups are also sorted alphabetically
 
 A new category tab is created automatically the first time a module with a new `definition.category` is discovered.
+
+`Discovery.run(groupStyle, groupStyleDefault)` accepts two optional arguments passed from `params.def` by `Framework.init`:
+
+- `groupStyle` — `table` mapping `category -> group -> style string`. Overrides the default style for specific groups.
+- `groupStyleDefault` — `string`. The fallback style for any group not covered by `groupStyle`. Defaults to `"collapsing"` when absent.
+
+Group style is resolved once per group at layout build time and stored on the layout entry as `group.style`.
+
+`opt._hashKey` (`def.id .. "." .. opt.configKey`) is cached on each option descriptor at discovery time, used by both `GetConfigHash` and `ApplyConfigHash` to avoid per-call string concatenation.
 
 For special modules, discovery expects:
 - `definition.name`
@@ -81,9 +90,11 @@ Special-module rendering contract:
 - Framework then invalidates the cached hash and updates the HUD
 
 Debug guard for special modules:
-- Framework can snapshot schema-backed config values before special draw
+- only active when `discovery.isDebugEnabled(special)` returns true
+- Framework snapshots schema-backed config values before special draw
 - after draw, if config changed but `specialState.isDirty()` stayed false, Framework calls `lib.warnIfSpecialConfigBypassedState(...)`
 - this warns when a special writes schema-backed `config` directly during draw instead of using `public.specialState`
+- gated to avoid per-frame allocation in production builds
 
 Returns `{ renderWindow, addMenuBar }`. Registration with `rom.gui` is handled by the coordinator via `Framework.init`.
 
@@ -98,6 +109,35 @@ Two independent debug controls:
 | Per-module Debug | `lib.log(name, enabled, msg)` inside module code | each module's `config.DebugMode` |
 
 Framework Debug and Lib Debug are written directly rather than through staging.
+
+### Group style system (`ui.lua` - `DrawCheckboxGroup`)
+
+Each group in a category layout carries a `style` field that controls how it is rendered:
+
+| Style | Behavior |
+|---|---|
+| `"collapsing"` | `CollapsingHeader` — default |
+| `"separator"` | Labeled section header + separator line, always visible, never collapsible |
+| `"flat"` | No header, items rendered directly |
+
+The coordinator configures styles via `def` fields passed to `Framework.init`:
+
+```lua
+local GroupStyle = Framework.GroupStyle  -- COLLAPSING, SEPARATOR, FLAT
+
+Framework.init({
+    def = {
+        groupStyleDefault = GroupStyle.FLAT,
+        groupStyle = {
+            ["Bug Fixes"] = { ["Boons & Hammers"] = GroupStyle.COLLAPSING },
+        },
+        ...
+    },
+    ...
+})
+```
+
+`Framework.GroupStyle` is the public constants table on the Framework module. Resolution order per group: `groupStyle[category][group]` → `groupStyleDefault` → `"collapsing"`.
 
 ### Theme (`ui_theme.lua` - `createTheme`)
 

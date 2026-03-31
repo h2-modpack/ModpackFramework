@@ -27,7 +27,7 @@ function Framework.createDiscovery(packId, config, lib)
     -- DISCOVERY
     -- -------------------------------------------------------------------------
 
-    function Discovery.run()
+    function Discovery.run(groupStyle, groupStyleDefault)
         local mods = rom.mods
 
         -- Collect all opted-in modules
@@ -54,11 +54,11 @@ function Framework.createDiscovery(packId, config, lib)
             if def.special then
                 if not def.name or not def.apply or not def.revert then
                     lib.warn(packId, config.DebugMode,
-                        "Skipping special " .. modName .. ": missing name, apply, or revert")
+                        "Skipping special %s: missing name, apply, or revert", modName)
                 else
                     if not mod.specialState then
                         lib.warn(packId, config.DebugMode,
-                            modName .. ": special module is missing public.specialState (managed special state)")
+                            "%s: special module is missing public.specialState (managed special state)", modName)
                     end
                     if def.stateSchema then
                         lib.validateSchema(def.stateSchema, modName)
@@ -74,7 +74,7 @@ function Framework.createDiscovery(packId, config, lib)
                 end
             else
                 if not def.id or not def.apply or not def.revert then
-                    lib.warn(packId, config.DebugMode, "Skipping " .. modName .. ": missing id, apply, or revert")
+                    lib.warn(packId, config.DebugMode, "Skipping %s: missing id, apply, or revert", modName)
                 else
                     local cat = def.category or "General"
                     local module = {
@@ -101,10 +101,11 @@ function Framework.createDiscovery(packId, config, lib)
                             if opt.type == "separator" then
                                 table.insert(validOptions, opt)
                             elseif type(opt.configKey) == "table" then
-                                lib.warn(packId, config.DebugMode, modName ..
-                                    ": option configKey is a table -- table-path keys are only valid in stateSchema " ..
-                                    "(special modules). Use a flat string key in def.options. Option skipped.")
+                                lib.warn(packId, config.DebugMode,
+                                    "%s: option configKey is a table -- table-path keys are only valid in stateSchema" ..
+                                    " (special modules). Use a flat string key in def.options. Option skipped.", modName)
                             else
+                                opt._hashKey = def.id .. "." .. opt.configKey
                                 table.insert(validOptions, opt)
                             end
                         end
@@ -137,11 +138,10 @@ function Framework.createDiscovery(packId, config, lib)
             if labelCount[label] > 1 then
                 labelIndex[label] = (labelIndex[label] or 0) + 1
                 special._tabLabel = label .. " (" .. labelIndex[label] .. ")"
-                lib.warn(packId, config.DebugMode, special.modName ..
-                    ": tabLabel '" ..
-                    label ..
-                    "' is shared by multiple specials. Rename tabLabel or definition.name to resolve. Rendering as '" ..
-                    special._tabLabel .. "'.")
+                lib.warn(packId, config.DebugMode,
+                    "%s: tabLabel '%s' is shared by multiple specials." ..
+                    " Rename tabLabel or definition.name to resolve. Rendering as '%s'.",
+                    special.modName, label, special._tabLabel)
             else
                 special._tabLabel = label
             end
@@ -152,7 +152,7 @@ function Framework.createDiscovery(packId, config, lib)
 
         -- Build UI layouts
         for _, cat in ipairs(Discovery.categories) do
-            Discovery.categoryLayouts[cat.key] = Discovery.buildLayout(cat.key)
+            Discovery.categoryLayouts[cat.key] = Discovery.buildLayout(cat.key, groupStyle, groupStyleDefault)
         end
     end
 
@@ -160,15 +160,17 @@ function Framework.createDiscovery(packId, config, lib)
     -- LAYOUT BUILDER
     -- -------------------------------------------------------------------------
 
-    function Discovery.buildLayout(category)
+    function Discovery.buildLayout(category, groupStyle, groupStyleDefault)
         local mods = Discovery.byCategory[category] or {}
         local groupOrder = {}
         local groups = {}
+        local catStyle = groupStyle and groupStyle[category]
 
         for _, m in ipairs(mods) do
             local g = m.group
             if not groups[g] then
-                groups[g] = { Header = g, Items = {} }
+                local style = (catStyle and catStyle[g]) or groupStyleDefault or "collapsing"
+                groups[g] = { Header = g, Items = {}, style = style }
                 table.insert(groupOrder, g)
             end
             table.insert(groups[g].Items, {
@@ -204,7 +206,7 @@ function Framework.createDiscovery(packId, config, lib)
         local ok, err = pcall(fn)
         if not ok then
             lib.warn(packId, config.DebugMode,
-                module.modName .. " " .. (enabled and "enable" or "disable") .. " failed: " .. tostring(err))
+                "%s %s failed: %s", module.modName, enabled and "enable" or "disable", err)
         end
     end
 
@@ -230,7 +232,7 @@ function Framework.createDiscovery(packId, config, lib)
         local ok, err = pcall(fn)
         if not ok then
             lib.warn(packId, config.DebugMode,
-                special.modName .. " " .. (enabled and "enable" or "disable") .. " failed: " .. tostring(err))
+                "%s %s failed: %s", special.modName, enabled and "enable" or "disable", err)
         end
     end
 

@@ -155,7 +155,7 @@ function Framework.createHash(discovery, config, lib, packId)
                     current = discovery.getOptionValue(m, opt.configKey)
                 end
                 if current ~= opt.default then
-                    kv[m.id .. "." .. KeyStr(opt.configKey)] = EncodeValue(opt, current)
+                    kv[opt._hashKey] = EncodeValue(opt, current)
                 end
                 end
             end
@@ -182,7 +182,7 @@ function Framework.createHash(discovery, config, lib, packId)
                 for _, field in ipairs(schema) do
                     local current = lib.readPath(cfg, field.configKey)
                     if current ~= field.default then
-                        kv[special.modName .. "." .. KeyStr(field.configKey)] = EncodeValue(field, current)
+                        kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))] = EncodeValue(field, current)
                     end
                 end
             end
@@ -214,8 +214,8 @@ function Framework.createHash(discovery, config, lib, packId)
         local version = tonumber(kv["_v"]) or 1
         if version > HASH_VERSION then
             lib.warn(packId, config.DebugMode,
-                "ApplyConfigHash: hash version " ..
-                version .. " is newer than supported (" .. HASH_VERSION .. ") — some settings may not apply")
+                "ApplyConfigHash: hash version %d is newer than supported (%d) — some settings may not apply",
+                version, HASH_VERSION)
         end
 
         -- Boolean module enabled states
@@ -234,7 +234,7 @@ function Framework.createHash(discovery, config, lib, packId)
         for _, m in ipairs(discovery.modulesWithOptions) do
             for _, opt in ipairs(m.options) do
                 if opt.type ~= "separator" and opt.configKey ~= nil then
-                    local stored = kv[m.id .. "." .. KeyStr(opt.configKey)]
+                    local stored = kv[opt._hashKey]
                     if stored ~= nil then
                         discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored))
                     else
@@ -255,7 +255,7 @@ function Framework.createHash(discovery, config, lib, packId)
             if schema then
                 local cfg = special.mod.config
                 for _, field in ipairs(schema) do
-                    local storedField = kv[special.modName .. "." .. KeyStr(field.configKey)]
+                    local storedField = kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))]
                     if storedField ~= nil then
                         lib.writePath(cfg, field.configKey, DecodeValue(field, storedField))
                     else

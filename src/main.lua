@@ -77,7 +77,7 @@ function Framework.init(params)
     local theme     = Framework.createTheme()
 
     -- Discovery must run before createHud so GetConfigHash has modules to read
-    discovery.run()
+    discovery.run(params.def and params.def.groupStyle, params.def and params.def.groupStyleDefault)
 
     local hud             = Framework.createHud(params.packId, packIndex, hash, theme, params.config, params.modutil)
     local ui              = Framework.createUI(discovery, hud, theme, params.def, params.config, lib, params.packId,
@@ -94,6 +94,13 @@ function Framework.init(params)
 end
 
 public.init = Framework.init
+
+--- Group style constants for use in def.groupStyle / def.groupStyleDefault.
+public.GroupStyle = {
+    COLLAPSING = "collapsing", -- collapsing header (default)
+    SEPARATOR  = "separator",  -- labeled section header + separator line, always visible
+    FLAT       = "flat",       -- no header, items rendered directly
+}
 
 --- Returns a stable imgui render callback for the given packId.
 --- Call once at startup; the callback late-binds to the current pack instance.

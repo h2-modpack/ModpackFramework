@@ -31,6 +31,8 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     -- Plain Lua tables mirroring each module's Chalk config.
     -- UI reads/writes go through staging. Chalk is only touched in event handlers.
 
+    local _EMPTY_OPTS = {} -- sentinel to avoid `or {}` alloc in DrawCheckboxGroup
+
     local staging = {
         ModEnabled = config.ModEnabled == true, -- snapshot once
         modules    = {},                        -- [module.id] = bool
@@ -161,7 +163,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         local ok, err = pcall(fn)
         if not ok then
             lib.warn(packId, config.DebugMode,
-                (module.modName or "unknown") .. " " .. (state and "apply" or "revert") .. " failed: " .. tostring(err))
+                "%s %s failed: %s", module.modName or "unknown", state and "apply" or "revert", err)
         end
     end
 
@@ -306,53 +308,62 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     -- GENERIC TAB CONTENT RENDERER
     -- =============================================================================
 
-    local function DrawCheckboxGroup(layoutData)
-        for _, group in ipairs(layoutData) do
-            PushTextColor(colors.info)
-            local collapsingHeader = ui.CollapsingHeader(group.Header, ImGuiTreeNodeFlags.DefaultOpen)
-            ui.PopStyleColor()
-            if collapsingHeader then
-                ui.Indent()
-                for _, itemData in ipairs(group.Items) do
-                    local m = discovery.modulesById[itemData.Key]
-                    if m then
-                        -- Read from staging, not Chalk
-                        local currentVal = staging.modules[m.id] or false
-                        local val, chg = ui.Checkbox(itemData.Name, currentVal)
-                        if chg then
-                            ToggleModule(m, val)
-                        end
-                        if ui.IsItemHovered() and itemData.Tooltip and itemData.Tooltip ~= "" then
-                            ui.SetTooltip(itemData.Tooltip)
-                        end
+    local function DrawGroupItems(group, winW)
+        for _, itemData in ipairs(group.Items) do
+            local m = discovery.modulesById[itemData.Key]
+            if m then
+                local currentVal = staging.modules[m.id] or false
+                local val, chg = ui.Checkbox(itemData.Name, currentVal)
+                if chg then ToggleModule(m, val) end
+                if ui.IsItemHovered() and itemData.Tooltip and itemData.Tooltip ~= "" then
+                    ui.SetTooltip(itemData.Tooltip)
+                end
 
-                        -- Inline options (rendered below checkbox when module is enabled)
-                        if currentVal and m.options then
-                            ui.Indent()
-                            local opts = staging.options[m.id] or {}
-                            for _, opt in ipairs(m.options) do
-                                if lib.isFieldVisible(opt, opts) then
-                                    ui.PushID(opt._pushId)
-                                    if opt.indent then
-                                        ui.Indent()
-                                    end
-                                    local currentValue = opt.configKey and opts[opt.configKey] or nil
-                                    local newVal, newChg = lib.drawField(ui, opt, currentValue,
-                                        ui.GetWindowWidth() * FIELD_MEDIUM)
-                                    if newChg and opt.configKey then
-                                        ChangeOption(m, opt.configKey, newVal)
-                                    end
-                                    if opt.indent then
-                                        ui.Unindent()
-                                    end
-                                    ui.PopID()
-                                end
+                if currentVal and m.options then
+                    ui.Indent()
+                    local opts = staging.options[m.id] or _EMPTY_OPTS
+                    for _, opt in ipairs(m.options) do
+                        if lib.isFieldVisible(opt, opts) then
+                            ui.PushID(opt._pushId)
+                            if opt.indent then ui.Indent() end
+                            local currentValue = opt.configKey and opts[opt.configKey] or nil
+                            local newVal, newChg = lib.drawField(ui, opt, currentValue, winW * FIELD_MEDIUM)
+                            if newChg and opt.configKey then
+                                ChangeOption(m, opt.configKey, newVal)
                             end
-                            ui.Unindent()
+                            if opt.indent then ui.Unindent() end
+                            ui.PopID()
                         end
                     end
+                    ui.Unindent()
                 end
-                ui.Unindent()
+            end
+        end
+    end
+
+    local function DrawCheckboxGroup(layoutData)
+        local winW = ui.GetWindowWidth()
+        for _, group in ipairs(layoutData) do
+            local style = group.style
+            -- "collapsing" : collapsing header (default)
+            -- "separator"  : labeled section header (non-collapsing) + separator line
+            -- "flat"       : items rendered directly, no label
+            if style == "collapsing" or not (style == "separator" or style == "flat") then
+                PushTextColor(colors.info)
+                local open = ui.CollapsingHeader(group.Header, ImGuiTreeNodeFlags.DefaultOpen)
+                ui.PopStyleColor()
+                if open then
+                    ui.Indent()
+                    DrawGroupItems(group, winW)
+                    ui.Unindent()
+                end
+            elseif style == "separator" then
+                DrawColoredText(colors.info, group.Header)
+                ui.Separator()
+                DrawGroupItems(group, winW)
+            else
+                -- "flat" or "auto" with single item
+                DrawGroupItems(group, winW)
             end
             ui.Spacing()
         end
@@ -473,9 +484,10 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             if staging.specials[special.modName] and special.mod.DrawQuickContent then
                 ui.Separator()
                 ui.Spacing()
-                local preDrawConfig = lib.captureSpecialConfigSnapshot(special.mod.config, special.stateSchema)
+                local debugEnabled = discovery.isDebugEnabled(special)
+                local preDrawConfig = debugEnabled and lib.captureSpecialConfigSnapshot(special.mod.config, special.stateSchema)
                 special.mod.DrawQuickContent(ui, special.mod.specialState, theme)
-                WarnIfSpecialBypassedState(special, preDrawConfig)
+                if debugEnabled then WarnIfSpecialBypassedState(special, preDrawConfig) end
                 FlushSpecialState(special)
             end
         end
@@ -498,9 +510,10 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
         -- Delegate tab content to the module
         if special.mod.DrawTab then
-            local preDrawConfig = lib.captureSpecialConfigSnapshot(special.mod.config, special.stateSchema)
+            local debugEnabled = discovery.isDebugEnabled(special)
+            local preDrawConfig = debugEnabled and lib.captureSpecialConfigSnapshot(special.mod.config, special.stateSchema)
             special.mod.DrawTab(ui, special.mod.specialState, theme)
-            WarnIfSpecialBypassedState(special, preDrawConfig)
+            if debugEnabled then WarnIfSpecialBypassedState(special, preDrawConfig) end
             FlushSpecialState(special)
         end
     end
