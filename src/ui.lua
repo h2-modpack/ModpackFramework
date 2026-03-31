@@ -326,7 +326,8 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                         if lib.isFieldVisible(opt, opts) then
                             ui.PushID(opt._pushId)
                             if opt.indent then ui.Indent() end
-                            local currentValue = opt.configKey and opts[opt.configKey] or nil
+                            local currentValue = nil
+                            if opt.configKey ~= nil then currentValue = opts[opt.configKey] end
                             local newVal, newChg = lib.drawField(ui, opt, currentValue, winW * FIELD_MEDIUM)
                             if newChg and opt.configKey then
                                 ChangeOption(m, opt.configKey, newVal)
