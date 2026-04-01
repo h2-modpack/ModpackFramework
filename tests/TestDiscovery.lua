@@ -72,7 +72,131 @@ function TestDiscovery:testCategoryOrderCanOverrideDefaultSort()
     end)
 end
 
-function TestDiscovery:testSpecialMissingSpecialStateIsSkipped()
+function TestDiscovery:testDuplicateRegularIdsWarnAndSkipAllColliders()
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-A"] = makeModule("Shared", "Alpha"),
+        ["test-B"] = makeModule("Shared", "Beta"),
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+
+        lu.assertEquals(#discovery.modules, 0)
+        lu.assertEquals(#discovery.modulesWithOptions, 0)
+        lu.assertEquals(discovery.modulesById["Shared"], nil)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "duplicate hash namespace 'Shared'")
+    lu.assertStrContains(warnings[1], "skipping all conflicting entries")
+end
+
+function TestDiscovery:testRegularIdCollidingWithSpecialModNameWarnsAndSkipsBoth()
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-regular"] = {
+            definition = {
+                modpack = "test-pack",
+                id = "test-special",
+                name = "Regular",
+                category = "Alpha",
+                apply = function() end,
+                revert = function() end,
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+            }),
+        },
+        ["test-special"] = {
+            definition = {
+                modpack = "test-pack",
+                special = true,
+                name = "Special",
+                apply = function() end,
+                revert = function() end,
+                stateSchema = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+                Flag = false,
+            }, {
+                stateSchema = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
+            }),
+            DrawTab = function() end,
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+
+        lu.assertEquals(#discovery.modules, 0)
+        lu.assertEquals(#discovery.specials, 0)
+        lu.assertEquals(discovery.modulesById["test-special"], nil)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "duplicate hash namespace 'test-special'")
+    lu.assertStrContains(warnings[1], "skipping all conflicting entries")
+end
+
+function TestDiscovery:testReservedHashNamespaceWarnsAndSkipsEntry()
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-A"] = makeModule("_v", "Alpha"),
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+
+        lu.assertEquals(#discovery.modules, 0)
+        lu.assertEquals(discovery.modulesById["_v"], nil)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "reserved hash namespace '_v'")
+    lu.assertStrContains(warnings[1], "skipping all conflicting entries")
+end
+
+function TestDiscovery:testUnknownCategoryOrderEntryWarnsInDebugMode()
+    local previousDebugMode = config.DebugMode
+    config.DebugMode = true
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-A"] = makeModule("A", "Alpha"),
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run(nil, nil, { "MissingCategory", "Alpha" })
+
+        lu.assertEquals(#discovery.categories, 1)
+        lu.assertEquals(discovery.categories[1].key, "Alpha")
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+    config.DebugMode = previousDebugMode
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "categoryOrder contains unknown category 'MissingCategory'")
+end
+
+function TestDiscovery:testSpecialMissingUiStateIsSkipped()
     local previousDebugMode = config.DebugMode
     config.DebugMode = true
     CaptureWarnings()
@@ -85,10 +209,14 @@ function TestDiscovery:testSpecialMissingSpecialStateIsSkipped()
                 name = "My Special",
                 apply = function() end,
                 revert = function() end,
+                stateSchema = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
             },
             config = {
                 Enabled = false,
                 DebugMode = false,
+                Flag = false,
             },
         },
     }, function()
@@ -105,7 +233,7 @@ function TestDiscovery:testSpecialMissingSpecialStateIsSkipped()
     lu.assertStrContains(warnings[1], "missing public.store")
 end
 
-function TestDiscovery:testSpecialMissingDrawEntrypointsWarnsButStillDiscovers()
+function TestDiscovery:testSpecialMissingStateSchemaIsSkipped()
     local previousDebugMode = config.DebugMode
     config.DebugMode = true
     CaptureWarnings()
@@ -122,7 +250,49 @@ function TestDiscovery:testSpecialMissingDrawEntrypointsWarnsButStillDiscovers()
             store = lib.createStore({
                 Enabled = false,
                 DebugMode = false,
-            }, {}),
+            }),
+            DrawTab = function() end,
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+        lu.assertEquals(#discovery.specials, 0)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+    config.DebugMode = previousDebugMode
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "missing definition.stateSchema")
+end
+
+function TestDiscovery:testSpecialMissingDrawEntrypointsWarnsButStillDiscovers()
+    local previousDebugMode = config.DebugMode
+    config.DebugMode = true
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-special"] = {
+            definition = {
+                modpack = "test-pack",
+                special = true,
+                name = "My Special",
+                apply = function() end,
+                revert = function() end,
+                stateSchema = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+                Flag = false,
+            }, {
+                stateSchema = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
+            }),
         },
     }, function()
         local discovery = Framework.createDiscovery("test-pack", config, lib)
@@ -229,4 +399,43 @@ function TestDiscovery:testDataMutationWithoutPatchOrManualWarnsAndSkips()
     lu.assertEquals(#warnings, 2)
     lu.assertStrContains(warnings[1], "dataMutation=true but module exposes neither patchPlan nor apply/revert")
     lu.assertStrContains(warnings[2], "missing id, apply/revert, or patchPlan")
+end
+
+function TestDiscovery:testRegularOptionsMissingUiStateWarnsAndSkipsOptionRendering()
+    local previousDebugMode = config.DebugMode
+    config.DebugMode = true
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-options"] = {
+            definition = {
+                modpack = "test-pack",
+                id = "OptionsOnly",
+                name = "OptionsOnly",
+                category = "General",
+                apply = function() end,
+                revert = function() end,
+                options = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+                Flag = false,
+            }),
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+        lu.assertEquals(#discovery.modules, 1)
+        lu.assertEquals(#discovery.modulesWithOptions, 0)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+    config.DebugMode = previousDebugMode
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "missing public.store.uiState")
 end

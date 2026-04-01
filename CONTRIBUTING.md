@@ -73,7 +73,7 @@ For special modules, discovery expects:
 - either:
   - `definition.patchPlan`
   - or `definition.apply` plus `definition.revert`
-- `public.store.specialState`
+- `public.store.uiState`
 - at least one UI entrypoint:
   - `public.DrawTab`
   - `public.DrawQuickContent`
@@ -112,7 +112,7 @@ _v=1|ModId=1|ModId.configKey=value|adamant-SpecialName.configKey=value
 `GetConfigHash(source)` returns `canonical, fingerprint`.
 `ApplyConfigHash(hash)` decodes and applies the canonical string; unknown keys are ignored and missing keys reset to defaults.
 
-For special modules, hash application writes config directly and then calls `specialState.reloadFromConfig()`.
+For special modules, hash application writes config directly and then calls `uiState.reloadFromConfig()`.
 
 If a field type is unknown or invalid, hashing should warn and degrade safely rather than crash.
 Invalid fields should not participate in schema-backed or hash processing as if they were valid.
@@ -129,8 +129,8 @@ Treat the following as frozen compatibility surface after release:
 - field `toHash(...)` / `fromHash(...)`
 
 Changing any of those is not cosmetic. It is compatibility work for saved profiles and shared
-hashes. If a rename or semantic change is required, handle it deliberately in hash migration logic
-rather than relying on silent decode-to-default behavior.
+hashes. If a rename or semantic change is required, handle it deliberately as ABI compatibility
+work rather than relying on silent decode-to-default behavior.
 
 ### HUD (`hud.lua` - `createHud`)
 
@@ -138,28 +138,37 @@ Manages the fingerprint overlay. Each pack registers its own component named `Mo
 
 ### UI (`ui.lua` - `createUI`)
 
-Framework uses its own staging table for regular module state and profiles.
+Framework uses its own staging table only for Framework-owned UI state:
+
+- coordinator `ModEnabled`
+- module enabled states
+- special enabled states
+- per-module debug flags
+- profile editing state
+
+Regular-module option values live in each module's `public.store.uiState`, not in a separate
+Framework-owned option staging table.
 
 Key handlers:
 
 | Function | Purpose |
 |---|---|
 | `ToggleModule(module, val)` | Enable or disable a regular module |
-| `ChangeOption(module, key, val)` | Change an inline option |
 | `ToggleSpecial(special, val)` | Enable or disable a special module |
 | `SetModuleState(module, state)` | Game-side mutation orchestration for patch/manual/hybrid modules |
 | `LoadProfile(hash)` | Apply a hash string to all modules and refresh staging |
 | `setCategoryEnabled(category, val)` | Bulk toggle all regular modules in a category |
 | `getCategoryStatus(category)` | Return category status text/color/exists for coordinator quick-setup UI |
 
-Special-module rendering contract:
-- Framework passes `public.store.specialState` into `DrawTab(ui, specialState, theme)` and `DrawQuickContent(ui, specialState, theme)`
-- after each draw, if `specialState.isDirty()` is true, Framework calls `specialState.flushToConfig()` once
+Managed UI-state rendering contract:
+- regular-module options are edited through `module.mod.store.uiState`
+- Framework passes `public.store.uiState` into `DrawTab(ui, uiState, theme)` and `DrawQuickContent(ui, uiState, theme)` via `lib.runUiStatePass`
+- after each draw, if `uiState.isDirty()` is true, Framework calls `uiState.flushToConfig()` once
 - Framework then invalidates the cached hash and updates the HUD
 
 Special-module flush behavior:
-- Framework passes `specialState` into module draw functions
-- after draw, if `specialState.isDirty()` is true, Framework flushes once and updates the HUD/hash state
+- Framework passes `uiState` into module draw functions
+- after draw, if `uiState.isDirty()` is true, Framework flushes once and updates the HUD/hash state
 
 Mutation lifecycle behavior:
 
@@ -237,7 +246,7 @@ Tests use the individual factory functions directly with mocks rather than requi
 - Never rename `definition.id` or `field.configKey` after release; these are hash keys
 - Coordinator-specific Quick Setup UI belongs in `def.renderQuickSetup(ctx)`, not in Framework
 - Module mutation lifecycle goes through Lib orchestration; use `lib.warn(...)` for framework errors, never crash
-- Regular-module UI reads from Framework staging, not Chalk
-- Special-module UI reads from `public.store.specialState.view` and mutates via `public.store.specialState.set/update/toggle`
+- Regular-module options read from `public.store.uiState.view`, not Chalk
+- Special-module UI reads from `public.store.uiState.view` and mutates via `public.store.uiState.set/update/toggle`
 - `definition.options` config keys must be flat strings; table-path keys are only valid in `definition.stateSchema`
 - `lib.createStore(...)` is the only supported store constructor; Framework does not support custom hand-rolled stores

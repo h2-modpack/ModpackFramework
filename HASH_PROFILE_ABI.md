@@ -172,6 +172,8 @@ Framework currently provides only limited compatibility behavior:
 - missing keys fall back to defaults
 - invalid dropdown/radio values fall back to defaults
 - invalid/unknown field types warn and degrade safely rather than crashing
+- saved coordinator profiles are audited at `Framework.init(...)` and warn on unknown field keys
+  inside known module/special namespaces, which helps catch likely renames
 
 Framework does not automatically preserve compatibility for:
 

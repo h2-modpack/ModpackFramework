@@ -16,6 +16,7 @@ function Framework.createHash(discovery, config, lib, packId)
     local HASH_VERSION = 1
 
     local Hash = {}
+    local GetSchemaConfigFields = lib.getSchemaConfigFields
 
     local function ReadPersisted(mod, key)
         return mod.store.read(key)
@@ -25,8 +26,8 @@ function Framework.createHash(discovery, config, lib, packId)
         mod.store.write(key, value)
     end
 
-    local function GetSpecialState(mod)
-        return mod.store.specialState
+    local function GetUiState(mod)
+        return mod.store.uiState
     end
 
     local BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -143,36 +144,12 @@ function Framework.createHash(discovery, config, lib, packId)
         return fieldType.fromHash(field, str)
     end
 
-    local function IsSchemaConfigField(field)
-        return field and field.type ~= "separator" and field.configKey ~= nil
-    end
-
-    local function GetSchemaConfigFields(schema)
-        if type(schema) ~= "table" then
-            return {}
-        end
-
-        local configFields = rawget(schema, "_configFields")
-        if configFields then
-            return configFields
-        end
-
-        configFields = {}
-        for _, field in ipairs(schema) do
-            if IsSchemaConfigField(field) then
-                table.insert(configFields, field)
-            end
-        end
-        schema._configFields = configFields
-        return configFields
-    end
-
     -- =============================================================================
     -- CONFIG HASH
     -- =============================================================================
 
     --- Compute config hash from a staging table or from live module configs.
-    --- @param source table|nil If provided, reads source.modules[id] for bools and source.options[id][key] for options.
+    --- @param source table|nil If provided, reads source.modules[id] for enabled states and source.specials[modName] for special enabled states.
     --- @return string canonical, string fingerprint
     function Hash.GetConfigHash(source)
         local kv = {}
@@ -196,20 +173,13 @@ function Framework.createHash(discovery, config, lib, packId)
         for _, m in ipairs(discovery.modulesWithOptions) do
             for _, opt in ipairs(m.options) do
                 if opt.type ~= "separator" and opt.configKey ~= nil then
-                local current
-                if source then
-                    current = source.options and source.options[m.id]
-                        and source.options[m.id][opt.configKey]
-                end
-                if current == nil then
-                    current = discovery.getOptionValue(m, opt.configKey)
-                end
-                if current ~= opt.default then
-                    local encoded = EncodeValue(opt, current, "option")
-                    if encoded ~= nil then
-                        kv[opt._hashKey or (m.id .. "." .. opt.configKey)] = encoded
+                    local current = discovery.getOptionValue(m, opt.configKey)
+                    if current ~= opt.default then
+                        local encoded = EncodeValue(opt, current, "option")
+                        if encoded ~= nil then
+                            kv[opt._hashKey or (m.id .. "." .. opt.configKey)] = encoded
+                        end
                     end
-                end
                 end
             end
         end
@@ -300,6 +270,10 @@ function Framework.createHash(discovery, config, lib, packId)
                     end
                 end
             end
+            local uiState = GetUiState(m.mod)
+            if uiState and uiState.reloadFromConfig then
+                uiState.reloadFromConfig()
+            end
         end
 
         -- Special module enabled states and state schema values
@@ -317,9 +291,9 @@ function Framework.createHash(discovery, config, lib, packId)
                         WritePersisted(special.mod, field.configKey, field.default)
                     end
                 end
-                local specialState = GetSpecialState(special.mod)
-                if specialState and specialState.reloadFromConfig then
-                    specialState.reloadFromConfig()
+                local uiState = GetUiState(special.mod)
+                if uiState and uiState.reloadFromConfig then
+                    uiState.reloadFromConfig()
                 end
             end
         end

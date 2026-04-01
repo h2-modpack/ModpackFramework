@@ -281,7 +281,16 @@ function TestHashApplyOrder:testRegularModuleApplySeesDecodedOptions()
         modName = "adamant-A",
         mod = {
             config = modConfig,
-            store = lib.createStore(modConfig),
+            store = lib.createStore(modConfig, {
+                options = {
+                    {
+                        type = "dropdown",
+                        configKey = "Mode",
+                        values = { "Vanilla", "Always" },
+                        default = "Vanilla",
+                    },
+                },
+            }),
         },
         definition = {
             apply = function()
@@ -329,11 +338,13 @@ function TestHashApplyOrder:testRegularModuleApplySeesDecodedOptions()
         m.mod.store.write(configKey, value)
     end
 
+    module.mod.store.uiState.set("Mode", "Vanilla")
     local _, ApplyHash = withDiscovery(discovery)
     lu.assertTrue(ApplyHash("_v=1|A=1|A.Mode=Always"))
     lu.assertTrue(modConfig.Enabled)
     lu.assertEquals(modConfig.Mode, "Always")
     lu.assertEquals(appliedMode, "Always")
+    lu.assertEquals(module.mod.store.uiState.view.Mode, "Always")
 end
 
 function TestHashApplyOrder:testSpecialModuleApplySeesDecodedSchemaValues()
@@ -363,8 +374,10 @@ function TestHashApplyOrder:testSpecialModuleApplySeesDecodedSchemaValues()
         },
     }
     special.mod.config = specialConfig
-    special.mod.store = lib.createStore(specialConfig, special.stateSchema)
-    special.mod.store.specialState.reloadFromConfig = function()
+    special.mod.store = lib.createStore(specialConfig, {
+        stateSchema = special.stateSchema,
+    })
+    special.mod.store.uiState.reloadFromConfig = function()
         reloadedWeapon = specialConfig.Weapon
     end
 
@@ -397,22 +410,24 @@ end
 -- SPECIAL STATE SAFETY
 -- =============================================================================
 
-TestSpecialStateSafety = {}
+TestUiStateSafety = {}
 
-function TestSpecialStateSafety:testSeparatorFieldsAreIgnoredByManagedSpecialState()
+function TestUiStateSafety:testSeparatorFieldsAreIgnoredByManagedUiState()
     local modConfig = {
         Flag = true,
     }
 
-    local specialState = lib.createStore(modConfig, {
-        { type = "separator", label = "Section" },
-        { type = "checkbox", configKey = "Flag", default = false },
-    }).specialState
+    local uiState = lib.createStore(modConfig, {
+        stateSchema = {
+            { type = "separator", label = "Section" },
+            { type = "checkbox", configKey = "Flag", default = false },
+        },
+    }).uiState
 
-    lu.assertTrue(specialState.view.Flag)
-    specialState.set("Flag", false)
-    lu.assertTrue(specialState.isDirty())
-    specialState.flushToConfig()
+    lu.assertTrue(uiState.view.Flag)
+    uiState.set("Flag", false)
+    lu.assertTrue(uiState.isDirty())
+    uiState.flushToConfig()
     lu.assertFalse(modConfig.Flag)
 end
 

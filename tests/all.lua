@@ -6,7 +6,9 @@
 require('tests/TestUtils')
 require('tests/TestDiscovery')
 require('tests/TestHash')
+require('tests/TestAuditProfiles')
 require('tests/TestLib')
+require('tests/TestMain')
 
 local lu = require('luaunit')
 os.exit(lu.LuaUnit.run())

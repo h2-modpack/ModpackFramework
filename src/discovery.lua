@@ -21,8 +21,9 @@ function Framework.createDiscovery(packId, config, lib)
         GetStore(mod).write(key, value)
     end
 
-    local function GetSpecialState(mod)
-        return GetStore(mod).specialState
+    local function GetUiState(mod)
+        local store = GetStore(mod)
+        return store and store.uiState or nil
     end
 
     -- -------------------------------------------------------------------------
@@ -61,6 +62,44 @@ function Framework.createDiscovery(packId, config, lib)
         end)
 
         local categorySet = {}
+        local duplicateNamespaces = {}
+        local namespaceEntries = {}
+
+        for _, entry in ipairs(found) do
+            local def = entry.def
+            local namespace = def.special and entry.modName or def.id
+            if namespace ~= nil then
+                namespaceEntries[namespace] = namespaceEntries[namespace] or {}
+                table.insert(namespaceEntries[namespace], {
+                    modName = entry.modName,
+                    kind = def.special and "special" or "module",
+                })
+            end
+        end
+
+        for namespace, entries in pairs(namespaceEntries) do
+            if namespace == "_v" then
+                duplicateNamespaces[namespace] = true
+                table.sort(entries, function(a, b) return a.modName < b.modName end)
+                local labels = {}
+                for _, item in ipairs(entries) do
+                    table.insert(labels, item.modName .. " (" .. item.kind .. ")")
+                end
+                lib.warn(packId, true,
+                    "reserved hash namespace '%s' is used by: %s; skipping all conflicting entries",
+                    tostring(namespace), table.concat(labels, ", "))
+            elseif #entries > 1 then
+                duplicateNamespaces[namespace] = true
+                table.sort(entries, function(a, b) return a.modName < b.modName end)
+                local labels = {}
+                for _, item in ipairs(entries) do
+                    table.insert(labels, item.modName .. " (" .. item.kind .. ")")
+                end
+                lib.warn(packId, true,
+                    "duplicate hash namespace '%s' across entries: %s; skipping all conflicting entries",
+                    tostring(namespace), table.concat(labels, ", "))
+            end
+        end
 
         for _, entry in ipairs(found) do
             local modName = entry.modName
@@ -91,17 +130,22 @@ function Framework.createDiscovery(packId, config, lib)
 
             if def.special then
                 local hasLifecycle = mutationInfo.hasManual or mutationInfo.hasPatch
-                if not def.name or not hasLifecycle then
+                if duplicateNamespaces[modName] then
+                    -- Already warned once for the full collision set above.
+                elseif not def.name or not hasLifecycle then
                     lib.warn(packId, config.DebugMode,
                         "Skipping special %s: missing name, apply/revert, or patchPlan", modName)
+                elseif type(def.stateSchema) ~= "table" then
+                    lib.warn(packId, config.DebugMode,
+                        "Skipping special %s: missing definition.stateSchema", modName)
                 else
                     local store = GetStore(mod)
                     if not store or type(store.read) ~= "function" or type(store.write) ~= "function" then
                         lib.warn(packId, config.DebugMode,
                             "%s: special module is missing public.store", modName)
-                    elseif not GetSpecialState(mod) then
+                    elseif not GetUiState(mod) then
                         lib.warn(packId, config.DebugMode,
-                            "%s: special module is missing public.store.specialState (managed special state)", modName)
+                            "%s: special module is missing public.store.uiState (managed UI state)", modName)
                     else
                         if def.stateSchema then
                             lib.validateSchema(def.stateSchema, modName)
@@ -116,7 +160,7 @@ function Framework.createDiscovery(packId, config, lib)
                             mod          = mod,
                             definition   = def,
                             stateSchema  = def.stateSchema,
-                            specialState = GetSpecialState(mod),
+                            uiState      = GetUiState(mod),
                             _enableLabel = "Enable " .. tostring(def.name),
                             _debugLabel  = tostring(def.name) .. "##" .. modName,
                         })
@@ -124,7 +168,9 @@ function Framework.createDiscovery(packId, config, lib)
                 end
             else
                 local hasLifecycle = mutationInfo.hasManual or mutationInfo.hasPatch
-                if not def.id or not hasLifecycle then
+                if duplicateNamespaces[def.id] then
+                    -- Already warned once for the full collision set above.
+                elseif not def.id or not hasLifecycle then
                     lib.warn(packId, config.DebugMode, "Skipping %s: missing id, apply/revert, or patchPlan", modName)
                 elseif not GetStore(mod) or type(GetStore(mod).read) ~= "function" or type(GetStore(mod).write) ~= "function" then
                     lib.warn(packId, config.DebugMode, "%s: module is missing public.store", modName)
@@ -164,7 +210,13 @@ function Framework.createDiscovery(packId, config, lib)
                         end
                         module.options = validOptions
                         if #validOptions > 0 then
-                            table.insert(Discovery.modulesWithOptions, module)
+                            if not GetUiState(mod) then
+                                lib.warn(packId, config.DebugMode,
+                                    "%s: module options are missing public.store.uiState (managed UI state)",
+                                    modName)
+                            else
+                                table.insert(Discovery.modulesWithOptions, module)
+                            end
                         end
                     end
 
@@ -204,9 +256,16 @@ function Framework.createDiscovery(packId, config, lib)
         -- force specific categories to the front via def.categoryOrder.
         local categoryRank = {}
         if type(categoryOrder) == "table" then
+            local warnedUnknownCategories = {}
             for index, category in ipairs(categoryOrder) do
                 if type(category) == "string" then
                     categoryRank[category] = index
+                    if not categorySet[category] and not warnedUnknownCategories[category] then
+                        warnedUnknownCategories[category] = true
+                        lib.warn(packId, config.DebugMode,
+                            "categoryOrder contains unknown category '%s'; entry ignored",
+                            category)
+                    end
                 end
             end
         end

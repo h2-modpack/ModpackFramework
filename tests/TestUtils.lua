@@ -72,7 +72,7 @@ rom.mods['adamant-ModpackLib'] = lib
 import = function() end
 import_as_fallback = function() end
 
-Framework = {}
+dofile("src/main.lua")
 dofile("src/ui_theme.lua")
 dofile("src/discovery.lua")
 dofile("src/hash.lua")
@@ -119,7 +119,9 @@ function MockDiscovery.create(moduleConfigs, optionConfigs, specialConfigs)
             modName = "adamant-" .. mc.id,
             mod = {
                 config = persisted,
-                store = lib.createStore(persisted),
+                store = lib.createStore(persisted, {
+                    options = mc.options,
+                }),
             },
             definition = {
                 apply = function() end,
@@ -149,7 +151,9 @@ function MockDiscovery.create(moduleConfigs, optionConfigs, specialConfigs)
     end
 
     for _, sc in ipairs(specialConfigs) do
-        local store = lib.createStore(sc.config, sc.stateSchema)
+        local store = lib.createStore(sc.config, {
+            stateSchema = sc.stateSchema,
+        })
         table.insert(discovery.specials, {
             modName = sc.modName,
             mod = {
@@ -158,7 +162,7 @@ function MockDiscovery.create(moduleConfigs, optionConfigs, specialConfigs)
             },
             definition = {},
             stateSchema = sc.stateSchema,
-            specialState = store.specialState,
+            uiState = store.uiState,
         })
     end
 

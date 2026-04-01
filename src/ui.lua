@@ -36,7 +36,6 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local staging = {
         ModEnabled = config.ModEnabled == true, -- snapshot once
         modules    = {},                        -- [module.id] = bool
-        options    = {},                        -- [module.id] = { [configKey] = value }
         specials   = {},                        -- [special.modName] = bool (enabled state)
         debug      = {},                        -- [module.id or special.modName] = bool (DebugMode per entry)
     }
@@ -53,13 +52,11 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             staging.modules[m.id] = discovery.isModuleEnabled(m)
         end
 
-        -- Inline options
+        -- Managed UI state for regular modules
         for _, m in ipairs(discovery.modulesWithOptions) do
-            staging.options[m.id] = staging.options[m.id] or {}
-            for _, opt in ipairs(m.options) do
-                if opt.configKey ~= nil then
-                    staging.options[m.id][opt.configKey] = discovery.getOptionValue(m, opt.configKey)
-                end
+            local uiState = m.mod.store and m.mod.store.uiState
+            if uiState and uiState.reloadFromConfig then
+                uiState.reloadFromConfig()
             end
         end
 
@@ -67,7 +64,10 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         for _, special in ipairs(discovery.specials) do
             staging.specials[special.modName] = discovery.isSpecialEnabled(special)
             staging.debug[special.modName] = discovery.isDebugEnabled(special)
-            special.specialState.reloadFromConfig()
+            local uiState = special.uiState
+            if uiState and uiState.reloadFromConfig then
+                uiState.reloadFromConfig()
+            end
         end
 
         -- Per-module debug states
@@ -184,12 +184,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         hud.updateHash()
     end
 
-    local function ChangeOption(module, configKey, value)
-        -- Update staging
-        staging.options[module.id] = staging.options[module.id] or {}
-        staging.options[module.id][configKey] = value
-        -- Write to Chalk
-        discovery.setOptionValue(module, configKey, value)
+    local function OnModuleUiStateFlushed(module)
         -- Re-apply if data mutation (option may affect game tables).
         -- disable() restores vanilla, enable() re-applies with the new option value.
         if module.definition.dataMutation then
@@ -324,21 +319,32 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
                 if currentVal and m.options then
                     ui.Indent()
-                    local opts = staging.options[m.id] or _EMPTY_OPTS
-                    for _, opt in ipairs(m.options) do
-                        if lib.isFieldVisible(opt, opts) then
-                            ui.PushID(opt._pushId)
-                            if opt.indent then ui.Indent() end
-                            local currentValue = nil
-                            if opt.configKey ~= nil then currentValue = opts[opt.configKey] end
-                            local newVal, newChg = lib.drawField(ui, opt, currentValue, winW * FIELD_MEDIUM)
-                            if newChg and opt.configKey then
-                                ChangeOption(m, opt.configKey, newVal)
+                    local uiState = m.mod.store and m.mod.store.uiState
+                    local opts = uiState and uiState.view or _EMPTY_OPTS
+                    lib.runUiStatePass({
+                        name = m.name or m.id,
+                        imgui = ui,
+                        uiState = uiState,
+                        draw = function()
+                            for _, opt in ipairs(m.options) do
+                                if lib.isFieldVisible(opt, opts) then
+                                    ui.PushID(opt._pushId)
+                                    if opt.indent then ui.Indent() end
+                                    local currentValue = nil
+                                    if opt.configKey ~= nil then currentValue = uiState.get(opt.configKey) end
+                                    local newVal, newChg = lib.drawField(ui, opt, currentValue, winW * FIELD_MEDIUM)
+                                    if newChg and opt.configKey then
+                                        uiState.set(opt.configKey, newVal)
+                                    end
+                                    if opt.indent then ui.Unindent() end
+                                    ui.PopID()
+                                end
                             end
-                            if opt.indent then ui.Unindent() end
-                            ui.PopID()
-                        end
-                    end
+                        end,
+                        onFlushed = function()
+                            OnModuleUiStateFlushed(m)
+                        end,
+                    })
                     ui.Unindent()
                 end
             end
@@ -408,7 +414,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         return cachedTabList
     end
 
-    local function OnSpecialStateFlushed(special)
+    local function OnSpecialUiStateFlushed(special)
         if special.definition.dataMutation and staging.specials[special.modName] then
             SetModuleState(special, false)
             SetModuleState(special, true)
@@ -416,6 +422,22 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         end
         InvalidateHash()
         hud.updateHash()
+    end
+
+    local function AuditAndResyncAllUiState()
+        for _, m in ipairs(discovery.modulesWithOptions) do
+            local uiState = m.mod.store and m.mod.store.uiState
+            if uiState then
+                lib.auditAndResyncUiState(m.name or m.id or m.modName, uiState)
+            end
+        end
+        for _, special in ipairs(discovery.specials) do
+            local uiState = special.uiState
+            if uiState then
+                lib.auditAndResyncUiState(special.definition.name or special.modName, uiState)
+            end
+        end
+        SnapshotToStaging()
     end
 
     -- Build lookup: tab label -> special entry
@@ -426,21 +448,21 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         specialQuickPassOpts[special.modName] = {
             name = special.definition.name or special.modName,
             imgui = ui,
-            specialState = special.specialState,
+            uiState = special.uiState,
             theme = theme,
             draw = special.mod.DrawQuickContent,
             onFlushed = function()
-                OnSpecialStateFlushed(special)
+                OnSpecialUiStateFlushed(special)
             end,
         }
         specialTabPassOpts[special.modName] = {
             name = special.definition.name or special.modName,
             imgui = ui,
-            specialState = special.specialState,
+            uiState = special.uiState,
             theme = theme,
             draw = special.mod.DrawTab,
             onFlushed = function()
-                OnSpecialStateFlushed(special)
+                OnSpecialUiStateFlushed(special)
             end,
         }
     end
@@ -504,7 +526,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                 ui.Spacing()
                 local passOpts = specialQuickPassOpts[special.modName]
                 passOpts.draw = special.mod.DrawQuickContent
-                lib.runSpecialUiPass(passOpts)
+                lib.runUiStatePass(passOpts)
             end
         end
     end
@@ -526,9 +548,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
         -- Delegate tab content to the module
         if special.mod.DrawTab then
-            local passOpts = specialTabPassOpts[special.modName]
-            passOpts.draw = special.mod.DrawTab
-            lib.runSpecialUiPass(passOpts)
+        local passOpts = specialTabPassOpts[special.modName]
+        passOpts.draw = special.mod.DrawTab
+        lib.runUiStatePass(passOpts)
         end
     end
 
@@ -732,6 +754,10 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         if ui.IsItemHovered() then
             ui.SetTooltip(
             "Print lib-internal diagnostic warnings (schema errors, unknown field types). Shared across all packs.")
+        end
+
+        if ui.Button("Audit + Resync UI State") then
+            AuditAndResyncAllUiState()
         end
 
         DrawColoredText(colors.info, "Per-Module Debug")

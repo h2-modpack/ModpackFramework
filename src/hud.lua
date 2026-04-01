@@ -9,6 +9,9 @@
 -- "ModpackMark_<packId>" and offset by packIndex * 24px.
 
 function Framework.createHud(packId, packIndex, hash, theme, config, modutil)
+    assert(ScreenData and ScreenData.HUD and ScreenData.HUD.ComponentData,
+        "Framework.createHud: game HUD globals are not ready; call Framework.init after game load")
+
     local HUD_LINE_HEIGHT = 24
     local componentName = "ModpackMark_" .. packId
 

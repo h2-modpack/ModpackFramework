@@ -1,20 +1,22 @@
 local lu = require('luaunit')
 
-TestLibSpecialUiPass = {}
+TestLibUiStatePass = {}
 
-function TestLibSpecialUiPass:testFlushesManagedStateAndCallsCallback()
+function TestLibUiStatePass:testFlushesManagedStateAndCallsCallback()
     local modConfig = {
         Flag = false,
     }
-    local schema = {
-        { type = "checkbox", configKey = "Flag", default = false },
+    local definition = {
+        stateSchema = {
+            { type = "checkbox", configKey = "Flag", default = false },
+        },
     }
-    local specialState = lib.createStore(modConfig, schema).specialState
+    local uiState = lib.createStore(modConfig, definition).uiState
 
     local flushed = false
-    local didFlush = lib.runSpecialUiPass({
-        name = "MySpecial",
-        specialState = specialState,
+    local didFlush = lib.runUiStatePass({
+        name = "MyState",
+        uiState = uiState,
         draw = function(_, state)
             state.set("Flag", true)
         end,
@@ -28,11 +30,11 @@ function TestLibSpecialUiPass:testFlushesManagedStateAndCallsCallback()
     lu.assertTrue(modConfig.Flag)
 end
 
-function TestLibSpecialUiPass:testMissingSpecialStateSkipsSafely()
-    local didFlush = lib.runSpecialUiPass({
-        name = "MySpecial",
+function TestLibUiStatePass:testMissingUiStateSkipsSafely()
+    local didFlush = lib.runUiStatePass({
+        name = "MyState",
         draw = function()
-            error("draw should not run when specialState is malformed")
+            error("draw should not run when uiState is malformed")
         end,
     })
 

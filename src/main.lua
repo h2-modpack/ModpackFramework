@@ -89,6 +89,90 @@ local function ValidateInitParams(params, lib)
 end
 
 -- =============================================================================
+-- PROFILE AUDIT
+-- =============================================================================
+
+--- Scan saved profiles against the current discovered key surface.
+--- Warns when a profile contains a field key for a known module or special that
+--- no longer exists — indicating a likely rename. Namespaces absent from discovery
+--- are skipped silently (module not installed vs. renamed is indistinguishable).
+---
+--- @param packId string
+--- @param profiles table  — array of { Name, Hash, Tooltip }
+--- @param discovery table — populated discovery object (after discovery.run)
+--- @param lib table
+local function AuditSavedProfiles(packId, profiles, discovery, lib)
+    -- Build known field surface from discovery.
+    -- Regular modules: namespace = definition.id, fields = flat option configKeys.
+    -- Special modules: namespace = modName, fields = stateSchema _schemaKeys.
+    local knownModules  = {}  -- [id]      = { [configKey] = true }
+    local knownSpecials = {}  -- [modName] = { [schemaKey] = true }
+
+    for _, m in ipairs(discovery.modules) do
+        local fields = {}
+        if m.options then
+            for _, opt in ipairs(m.options) do
+                if opt.type ~= "separator" and opt.configKey ~= nil then
+                    fields[tostring(opt.configKey)] = true
+                end
+            end
+        end
+        knownModules[m.id] = fields
+    end
+
+    for _, special in ipairs(discovery.specials) do
+        local fields = {}
+        if special.stateSchema then
+            for _, field in ipairs(special.stateSchema) do
+                if field.type ~= "separator" and field.configKey ~= nil then
+                    local key = field._schemaKey
+                        or (type(field.configKey) == "table" and table.concat(field.configKey, "."))
+                        or tostring(field.configKey)
+                    fields[key] = true
+                end
+            end
+        end
+        knownSpecials[special.modName] = fields
+    end
+
+    -- Scan each saved profile hash.
+    for i, profile in ipairs(profiles) do
+        local hash = profile.Hash
+        if hash and hash ~= "" then
+            local profileLabel = (profile.Name ~= "" and profile.Name) or ("slot " .. i)
+            for entry in string.gmatch(hash .. "|", "([^|]*)|") do
+                local key = string.match(entry, "^([^=]+)=")
+                if key and key ~= "_v" then
+                    -- "Namespace.fieldKey" or just "Namespace" (enabled-state key)
+                    local namespace, field = string.match(key, "^([^.]+)%.(.+)$")
+                    if not namespace then
+                        namespace = key
+                        field = nil
+                    end
+
+                    -- Only warn when the namespace is in discovery — skip silently otherwise.
+                    if field then
+                        local moduleFields  = knownModules[namespace]
+                        local specialFields = knownSpecials[namespace]
+                        if moduleFields and not moduleFields[field] then
+                            lib.warn(packId, true,
+                                "Profile '%s': unrecognized key '%s.%s' — possible rename or removed option",
+                                profileLabel, namespace, field)
+                        elseif specialFields and not specialFields[field] then
+                            lib.warn(packId, true,
+                                "Profile '%s': unrecognized key '%s.%s' — possible rename or removed field",
+                                profileLabel, namespace, field)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+Framework.auditSavedProfiles = AuditSavedProfiles
+
+-- =============================================================================
 -- FRAMEWORK.INIT
 -- =============================================================================
 
@@ -134,6 +218,8 @@ function Framework.init(params)
         params.def and params.def.categoryOrder
     )
 
+    AuditSavedProfiles(params.packId, params.config.Profiles, discovery, lib)
+
     local hud             = Framework.createHud(params.packId, packIndex, hash, theme, params.config, params.modutil)
     local ui              = Framework.createUI(discovery, hud, theme, params.def, params.config, lib, params.packId,
         params.windowTitle)
@@ -165,11 +251,23 @@ public.SidebarOrder = {
 --- Returns a stable imgui render callback for the given packId.
 --- Call once at startup; the callback late-binds to the current pack instance.
 public.getRenderer = function(packId)
-    return function() _packs[packId].ui.renderWindow() end
+    return function()
+        local pack = _packs[packId]
+        if not pack or not pack.ui or type(pack.ui.renderWindow) ~= "function" then
+            return
+        end
+        pack.ui.renderWindow()
+    end
 end
 
 --- Returns a stable menu bar callback for the given packId.
 --- Call once at startup; the callback late-binds to the current pack instance.
 public.getMenuBar = function(packId)
-    return function() _packs[packId].ui.addMenuBar() end
+    return function()
+        local pack = _packs[packId]
+        if not pack or not pack.ui or type(pack.ui.addMenuBar) ~= "function" then
+            return
+        end
+        pack.ui.addMenuBar()
+    end
 end
