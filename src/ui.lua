@@ -376,6 +376,8 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local selectedTab = "Quick Setup"
 
     local cachedTabList = nil
+    local specialQuickPassOpts = {}
+    local specialTabPassOpts = {}
 
     local function BuildTabList()
         if cachedTabList then return cachedTabList end
@@ -417,6 +419,31 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
     for _, special in ipairs(discovery.specials) do
         specialByTabLabel[special._tabLabel] = special
+        specialQuickPassOpts[special.modName] = {
+            name = special.definition.name or special.modName,
+            imgui = ui,
+            config = special.mod.config,
+            schema = special.stateSchema,
+            specialState = special.mod.specialState,
+            theme = theme,
+            draw = special.mod.DrawQuickContent,
+            validateEnabled = false,
+            onFlushed = function()
+                OnSpecialStateFlushed(special)
+            end,
+        }
+        specialTabPassOpts[special.modName] = {
+            name = special.definition.name or special.modName,
+            imgui = ui,
+            config = special.mod.config,
+            schema = special.stateSchema,
+            specialState = special.mod.specialState,
+            theme = theme,
+            draw = special.mod.DrawTab,
+            onFlushed = function()
+                OnSpecialStateFlushed(special)
+            end,
+        }
     end
 
     -- =============================================================================
@@ -476,21 +503,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             if staging.specials[special.modName] and special.mod.DrawQuickContent then
                 ui.Separator()
                 ui.Spacing()
-                lib.runSpecialUiPass({
-                    name = special.definition.name or special.modName,
-                    imgui = ui,
-                    config = special.mod.config,
-                    schema = special.stateSchema,
-                    specialState = special.mod.specialState,
-                    theme = theme,
-                    draw = special.mod.DrawQuickContent,
-                    -- Quick Setup can render multiple specials per frame; keep the
-                    -- expensive direct-config-write detector scoped to full special tabs.
-                    validateEnabled = false,
-                    onFlushed = function()
-                        OnSpecialStateFlushed(special)
-                    end,
-                })
+                local passOpts = specialQuickPassOpts[special.modName]
+                passOpts.draw = special.mod.DrawQuickContent
+                lib.runSpecialUiPass(passOpts)
             end
         end
     end
@@ -512,18 +527,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
         -- Delegate tab content to the module
         if special.mod.DrawTab then
-            lib.runSpecialUiPass({
-                name = special.definition.name or special.modName,
-                imgui = ui,
-                config = special.mod.config,
-                schema = special.stateSchema,
-                specialState = special.mod.specialState,
-                theme = theme,
-                draw = special.mod.DrawTab,
-                onFlushed = function()
-                    OnSpecialStateFlushed(special)
-                end,
-            })
+            local passOpts = specialTabPassOpts[special.modName]
+            passOpts.draw = special.mod.DrawTab
+            lib.runSpecialUiPass(passOpts)
         end
     end
 
