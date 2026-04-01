@@ -66,11 +66,34 @@ function Framework.createDiscovery(packId, config, lib)
             local modName = entry.modName
             local mod     = entry.mod
             local def     = entry.def
+            local inferredMutationMode, mutationInfo = lib.inferMutationMode(def)
+
+            if def.mutationMode ~= nil then
+                local isKnownMode = def.mutationMode == lib.MutationMode.Patch
+                    or def.mutationMode == lib.MutationMode.Manual
+                    or def.mutationMode == lib.MutationMode.Hybrid
+                if not isKnownMode then
+                    lib.warn(packId, config.DebugMode,
+                        "%s: definition.mutationMode must be lib.MutationMode.Patch, Manual, or Hybrid; got %s",
+                        modName, tostring(def.mutationMode))
+                elseif inferredMutationMode and def.mutationMode ~= inferredMutationMode then
+                    lib.warn(packId, config.DebugMode,
+                        "%s: definition.mutationMode=%s does not match inferred mutation shape %s",
+                        modName, tostring(def.mutationMode), tostring(inferredMutationMode))
+                end
+            end
+
+            if def.dataMutation and not inferredMutationMode then
+                lib.warn(packId, config.DebugMode,
+                    "%s: dataMutation=true but module exposes neither patchPlan nor apply/revert",
+                    modName)
+            end
 
             if def.special then
-                if not def.name or not def.apply or not def.revert then
+                local hasLifecycle = mutationInfo.hasManual or mutationInfo.hasPatch
+                if not def.name or not hasLifecycle then
                     lib.warn(packId, config.DebugMode,
-                        "Skipping special %s: missing name, apply, or revert", modName)
+                        "Skipping special %s: missing name, apply/revert, or patchPlan", modName)
                 else
                     local store = GetStore(mod)
                     if not store or type(store.read) ~= "function" or type(store.write) ~= "function" then
@@ -100,8 +123,9 @@ function Framework.createDiscovery(packId, config, lib)
                     end
                 end
             else
-                if not def.id or not def.apply or not def.revert then
-                    lib.warn(packId, config.DebugMode, "Skipping %s: missing id, apply, or revert", modName)
+                local hasLifecycle = mutationInfo.hasManual or mutationInfo.hasPatch
+                if not def.id or not hasLifecycle then
+                    lib.warn(packId, config.DebugMode, "Skipping %s: missing id, apply/revert, or patchPlan", modName)
                 elseif not GetStore(mod) or type(GetStore(mod).read) ~= "function" or type(GetStore(mod).write) ~= "function" then
                     lib.warn(packId, config.DebugMode, "%s: module is missing public.store", modName)
                 else
@@ -254,8 +278,12 @@ function Framework.createDiscovery(packId, config, lib)
     --- Write a module's Enabled state and call enable/disable.
     function Discovery.setModuleEnabled(module, enabled)
         WritePersisted(module.mod, "Enabled", enabled)
-        local fn = enabled and module.definition.apply or module.definition.revert
-        local ok, err = pcall(fn)
+        local ok, err
+        if enabled then
+            ok, err = lib.applyDefinition(module.definition, GetStore(module.mod))
+        else
+            ok, err = lib.revertDefinition(module.definition, GetStore(module.mod))
+        end
         if not ok then
             lib.warn(packId, config.DebugMode,
                 "%s %s failed: %s", module.modName, enabled and "enable" or "disable", err)
@@ -280,8 +308,12 @@ function Framework.createDiscovery(packId, config, lib)
     --- Write a special module's Enabled state and call enable/disable.
     function Discovery.setSpecialEnabled(special, enabled)
         WritePersisted(special.mod, "Enabled", enabled)
-        local fn = enabled and special.definition.apply or special.definition.revert
-        local ok, err = pcall(fn)
+        local ok, err
+        if enabled then
+            ok, err = lib.applyDefinition(special.definition, GetStore(special.mod))
+        else
+            ok, err = lib.revertDefinition(special.definition, GetStore(special.mod))
+        end
         if not ok then
             lib.warn(packId, config.DebugMode,
                 "%s %s failed: %s", special.modName, enabled and "enable" or "disable", err)

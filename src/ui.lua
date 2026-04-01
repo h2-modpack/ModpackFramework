@@ -159,8 +159,12 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     --- Apply enable/disable on the game side only (no Chalk, no staging).
     --- Shared by ToggleModule and the master toggle.
     local function SetModuleState(module, state)
-        local fn = state and module.definition.apply or module.definition.revert
-        local ok, err = pcall(fn)
+        local ok, err
+        if state then
+            ok, err = lib.applyDefinition(module.definition, module.mod.store)
+        else
+            ok, err = lib.revertDefinition(module.definition, module.mod.store)
+        end
         if not ok then
             lib.warn(packId, config.DebugMode,
                 "%s %s failed: %s", module.modName or "unknown", state and "apply" or "revert", err)

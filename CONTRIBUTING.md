@@ -5,6 +5,7 @@ Reusable orchestration library for Hades 2 modpacks. Provides discovery, config 
 See also:
 
 - `HASH_PROFILE_ABI.md` for the dedicated hash/profile ABI policy
+- `../Support/mutation_plan_migration.md` for mutation-plan authoring and migration examples
 
 ## Architecture
 
@@ -69,8 +70,9 @@ Group style is resolved once per group at layout build time and stored on the la
 
 For special modules, discovery expects:
 - `definition.name`
-- `definition.apply`
-- `definition.revert`
+- either:
+  - `definition.patchPlan`
+  - or `definition.apply` plus `definition.revert`
 - `public.store.specialState`
 - at least one UI entrypoint:
   - `public.DrawTab`
@@ -78,6 +80,21 @@ For special modules, discovery expects:
 
 If a special exposes neither draw entrypoint, discovery warns that the tab will be empty but does
 not skip the module automatically.
+
+Mutation authoring shape is inferred in v1:
+
+- patch-only: `patchPlan`
+- manual-only: `apply` + `revert`
+- hybrid: both
+
+Optional enum:
+
+- `definition.mutationMode = lib.MutationMode.Patch`
+- `definition.mutationMode = lib.MutationMode.Manual`
+- `definition.mutationMode = lib.MutationMode.Hybrid`
+
+If the enum is present and does not match the inferred shape, discovery warns but does not skip the
+module.
 
 ### Config hash (`hash.lua` - `createHash`)
 
@@ -130,7 +147,7 @@ Key handlers:
 | `ToggleModule(module, val)` | Enable or disable a regular module |
 | `ChangeOption(module, key, val)` | Change an inline option |
 | `ToggleSpecial(special, val)` | Enable or disable a special module |
-| `SetModuleState(module, state)` | Game-side only apply or revert |
+| `SetModuleState(module, state)` | Game-side mutation orchestration for patch/manual/hybrid modules |
 | `LoadProfile(hash)` | Apply a hash string to all modules and refresh staging |
 | `setCategoryEnabled(category, val)` | Bulk toggle all regular modules in a category |
 | `getCategoryStatus(category)` | Return category status text/color/exists for coordinator quick-setup UI |
@@ -143,6 +160,17 @@ Special-module rendering contract:
 Special-module flush behavior:
 - Framework passes `specialState` into module draw functions
 - after draw, if `specialState.isDirty()` is true, Framework flushes once and updates the HUD/hash state
+
+Mutation lifecycle behavior:
+
+- patch-only modules are supported
+- manual-only modules are supported
+- hybrid modules are supported
+
+Hybrid ordering is stable:
+
+- apply: patch, then manual
+- revert: manual, then patch
 
 Returns `{ renderWindow, addMenuBar }`. Registration with `rom.gui` is handled by the coordinator via `Framework.init`.
 
@@ -208,7 +236,7 @@ Tests use the individual factory functions directly with mocks rather than requi
 
 - Never rename `definition.id` or `field.configKey` after release; these are hash keys
 - Coordinator-specific Quick Setup UI belongs in `def.renderQuickSetup(ctx)`, not in Framework
-- All module apply/revert calls go through `pcall`; use `lib.warn(...)` for framework errors, never crash
+- Module mutation lifecycle goes through Lib orchestration; use `lib.warn(...)` for framework errors, never crash
 - Regular-module UI reads from Framework staging, not Chalk
 - Special-module UI reads from `public.store.specialState.view` and mutates via `public.store.specialState.set/update/toggle`
 - `definition.options` config keys must be flat strings; table-path keys are only valid in `definition.stateSchema`

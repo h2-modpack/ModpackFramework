@@ -137,3 +137,96 @@ function TestDiscovery:testSpecialMissingDrawEntrypointsWarnsButStillDiscovers()
     lu.assertEquals(#warnings, 1)
     lu.assertStrContains(warnings[1], "exposes neither DrawTab nor DrawQuickContent")
 end
+
+function TestDiscovery:testPatchOnlyModuleIsDiscovered()
+    withMockModules({
+        ["test-patch"] = {
+            definition = {
+                modpack = "test-pack",
+                id = "PatchOnly",
+                name = "PatchOnly",
+                category = "General",
+                dataMutation = true,
+                patchPlan = function() end,
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+            }),
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+        lu.assertEquals(#discovery.modules, 1)
+        lu.assertEquals(discovery.modules[1].id, "PatchOnly")
+    end)
+end
+
+function TestDiscovery:testMutationModeMismatchWarns()
+    local previousDebugMode = config.DebugMode
+    config.DebugMode = true
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-mismatch"] = {
+            definition = {
+                modpack = "test-pack",
+                id = "Mismatch",
+                name = "Mismatch",
+                category = "General",
+                dataMutation = true,
+                mutationMode = lib.MutationMode.Manual,
+                patchPlan = function() end,
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+            }),
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+        lu.assertEquals(#discovery.modules, 1)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+    config.DebugMode = previousDebugMode
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "does not match inferred mutation shape")
+end
+
+function TestDiscovery:testDataMutationWithoutPatchOrManualWarnsAndSkips()
+    local previousDebugMode = config.DebugMode
+    config.DebugMode = true
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-invalid"] = {
+            definition = {
+                modpack = "test-pack",
+                id = "Invalid",
+                name = "Invalid",
+                category = "General",
+                dataMutation = true,
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+            }),
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+        lu.assertEquals(#discovery.modules, 0)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+    config.DebugMode = previousDebugMode
+
+    lu.assertEquals(#warnings, 2)
+    lu.assertStrContains(warnings[1], "dataMutation=true but module exposes neither patchPlan nor apply/revert")
+    lu.assertStrContains(warnings[2], "missing id, apply/revert, or patchPlan")
+end
