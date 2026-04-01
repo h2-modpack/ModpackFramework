@@ -2,6 +2,10 @@
 
 Reusable orchestration library for Hades 2 modpacks. Provides discovery, config hashing, HUD fingerprint, and the shared UI window. Coordinators call `Framework.init(params)` and get the full pack runtime.
 
+See also:
+
+- `HASH_PROFILE_ABI.md` for the dedicated hash/profile ABI policy
+
 ## Architecture
 
 ```text
@@ -17,6 +21,29 @@ src/
 Each sub-file exposes one factory function on the `Framework` table. `Framework.init` wires them together, handles coordinator registration through Lib, and returns the pack table. Factory params replace the old global `Core.*` style; state is closed over, not shared.
 
 Coordinators own their Chalk config, `def` (`NUM_PROFILES`, `defaultProfiles`, `groupStyle`, `groupStyleDefault`, `renderQuickSetup`), and `packId`. Framework owns discovery, hash, HUD, and the shared UI.
+
+## Coordinator init contract
+
+`Framework.init(params)` is a validated coordinator contract, not a loose bag of inputs.
+
+Required:
+
+- `params.packId` - non-empty string
+- `params.windowTitle` - non-empty string
+- `params.config` - table containing:
+  - `ModEnabled` boolean
+  - `DebugMode` boolean
+  - `Profiles` table
+- `params.def` - table containing:
+  - `NUM_PROFILES` positive integer
+  - `defaultProfiles` table
+
+`config.Profiles` must be pre-populated with entries for `1..NUM_PROFILES`. Framework normalizes
+missing `Name`, `Hash`, and `Tooltip` values on each existing entry, but missing profile slots are
+treated as coordinator contract errors and fail fast.
+
+`sidebarOrder` and `groupStyleDefault` are optional, but unknown values are warned and normalized
+to safe defaults.
 
 ## Key systems
 
@@ -45,6 +72,12 @@ For special modules, discovery expects:
 - `definition.apply`
 - `definition.revert`
 - `public.store.specialState`
+- at least one UI entrypoint:
+  - `public.DrawTab`
+  - `public.DrawQuickContent`
+
+If a special exposes neither draw entrypoint, discovery warns that the tab will be empty but does
+not skip the module automatically.
 
 ### Config hash (`hash.lua` - `createHash`)
 
@@ -63,6 +96,24 @@ _v=1|ModId=1|ModId.configKey=value|adamant-SpecialName.configKey=value
 `ApplyConfigHash(hash)` decodes and applies the canonical string; unknown keys are ignored and missing keys reset to defaults.
 
 For special modules, hash application writes config directly and then calls `specialState.reloadFromConfig()`.
+
+If a field type is unknown or invalid, hashing should warn and degrade safely rather than crash.
+Invalid fields should not participate in schema-backed or hash processing as if they were valid.
+
+### Hash ABI policy
+
+Treat the following as frozen compatibility surface after release:
+
+- regular `definition.id`
+- regular option `configKey`
+- special module `modName`
+- special schema `configKey`
+- field defaults
+- field `toHash(...)` / `fromHash(...)`
+
+Changing any of those is not cosmetic. It is compatibility work for saved profiles and shared
+hashes. If a rename or semantic change is required, handle it deliberately in hash migration logic
+rather than relying on silent decode-to-default behavior.
 
 ### HUD (`hud.lua` - `createHud`)
 
@@ -161,3 +212,4 @@ Tests use the individual factory functions directly with mocks rather than requi
 - Regular-module UI reads from Framework staging, not Chalk
 - Special-module UI reads from `public.store.specialState.view` and mutates via `public.store.specialState.set/update/toggle`
 - `definition.options` config keys must be flat strings; table-path keys are only valid in `definition.stateSchema`
+- `lib.createStore(...)` is the only supported store constructor; Framework does not support custom hand-rolled stores

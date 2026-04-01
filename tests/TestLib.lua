@@ -28,6 +28,17 @@ function TestLibSpecialUiPass:testFlushesManagedStateAndCallsCallback()
     lu.assertTrue(modConfig.Flag)
 end
 
+function TestLibSpecialUiPass:testMissingSpecialStateSkipsSafely()
+    local didFlush = lib.runSpecialUiPass({
+        name = "MySpecial",
+        draw = function()
+            error("draw should not run when specialState is malformed")
+        end,
+    })
+
+    lu.assertFalse(didFlush)
+end
+
 TestLibSchemaValidation = {}
 
 function TestLibSchemaValidation:testDuplicateConfigKeysWarn()

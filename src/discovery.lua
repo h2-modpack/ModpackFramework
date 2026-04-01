@@ -83,6 +83,11 @@ function Framework.createDiscovery(packId, config, lib)
                         if def.stateSchema then
                             lib.validateSchema(def.stateSchema, modName)
                         end
+                        if not mod.DrawTab and not mod.DrawQuickContent then
+                            lib.warn(packId, config.DebugMode,
+                                "%s: special module exposes neither DrawTab nor DrawQuickContent; tab will be empty",
+                                modName)
+                        end
                         table.insert(Discovery.specials, {
                             modName      = modName,
                             mod          = mod,

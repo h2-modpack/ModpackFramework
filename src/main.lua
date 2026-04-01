@@ -38,6 +38,56 @@ import 'ui.lua'
 local _packs    = {} -- packId -> { ui, hud, _index }
 local _packList = {} -- ordered list of packIds for HUD Y-offset stacking
 
+local function ValidateInitParams(params, lib)
+    assert(type(params) == "table", "Framework.init: params must be a table")
+    assert(type(params.packId) == "string" and params.packId ~= "",
+        "Framework.init: packId must be a non-empty string")
+    assert(type(params.windowTitle) == "string" and params.windowTitle ~= "",
+        "Framework.init: windowTitle must be a non-empty string")
+    assert(type(params.config) == "table", "Framework.init: config must be a table")
+    assert(type(params.def) == "table", "Framework.init: def must be a table")
+    assert(type(params.config.ModEnabled) == "boolean",
+        "Framework.init: config.ModEnabled must be a boolean")
+    assert(type(params.config.DebugMode) == "boolean",
+        "Framework.init: config.DebugMode must be a boolean")
+    assert(type(params.config.Profiles) == "table",
+        "Framework.init: config.Profiles must be a table")
+
+    local numProfiles = params.def.NUM_PROFILES
+    assert(type(numProfiles) == "number" and numProfiles > 0 and math.floor(numProfiles) == numProfiles,
+        "Framework.init: def.NUM_PROFILES must be a positive integer")
+    assert(type(params.def.defaultProfiles) == "table",
+        "Framework.init: def.defaultProfiles must be a table")
+
+    for i = 1, numProfiles do
+        local profile = params.config.Profiles[i]
+        assert(type(profile) == "table",
+            string.format(
+                "Framework.init: config.Profiles[%d] is missing; ensure config.lua declares all %d profile entries",
+                i, numProfiles))
+        profile.Name = profile.Name or ""
+        profile.Hash = profile.Hash or ""
+        profile.Tooltip = profile.Tooltip or ""
+    end
+
+    local sidebarOrder = params.def.sidebarOrder
+    if sidebarOrder ~= nil and sidebarOrder ~= "special-first" and sidebarOrder ~= "category-first" then
+        lib.warn(params.packId, true,
+            "Framework.init: unknown sidebarOrder '%s'; defaulting to 'special-first'",
+            tostring(sidebarOrder))
+        params.def.sidebarOrder = "special-first"
+    end
+
+    local groupStyleDefault = params.def.groupStyleDefault
+    if groupStyleDefault ~= nil and groupStyleDefault ~= "collapsing" and groupStyleDefault ~= "separator" and
+        groupStyleDefault ~= "flat" then
+        lib.warn(params.packId, true,
+            "Framework.init: unknown groupStyleDefault '%s'; defaulting to 'collapsing'",
+            tostring(groupStyleDefault))
+        params.def.groupStyleDefault = "collapsing"
+    end
+end
+
 -- =============================================================================
 -- FRAMEWORK.INIT
 -- =============================================================================
@@ -56,6 +106,7 @@ local _packList = {} -- ordered list of packIds for HUD Y-offset stacking
 --- @return table pack  — { discovery, hash, hud, ui, _index }
 function Framework.init(params)
     local lib = rom.mods['adamant-ModpackLib']
+    ValidateInitParams(params, lib)
 
     -- Register coordinator with lib so modules can resolve packId → config
     -- without coupling to Thunderstore mod IDs.

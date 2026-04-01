@@ -498,3 +498,37 @@ function TestHashErrors:testMalformedHashRejected()
     local _, ApplyHash = withDiscovery(discovery)
     lu.assertFalse(ApplyHash("notavalidentry"))
 end
+
+function TestHashErrors:testUnknownOptionTypeDoesNotCrashHashEncodeOrDecode()
+    local previousDebugMode = config.DebugMode
+    config.DebugMode = true
+    CaptureWarnings()
+
+    local discovery = MockDiscovery.create({
+        {
+            id = "A",
+            category = "Cat1",
+            enabled = true,
+            default = false,
+            options = {
+                { type = "mystery", configKey = "Mode", default = "Vanilla", _hashKey = "A.Mode" },
+            },
+        },
+    })
+    discovery.modules[1].mod.config.Mode = "Always"
+
+    local GetHash, ApplyHash = withDiscovery(discovery)
+    local canonical = GetHash()
+    lu.assertEquals(canonical, "_v=1|A=1")
+
+    discovery.modules[1].mod.config.Mode = "Always"
+    lu.assertTrue(ApplyHash("_v=1|A.Mode=Broken"))
+    lu.assertEquals(discovery.modules[1].mod.config.Mode, "Vanilla")
+
+    local warnings = Warnings
+    RestoreWarnings()
+    config.DebugMode = previousDebugMode
+
+    lu.assertTrue(#warnings >= 2)
+    lu.assertStrContains(table.concat(warnings, "\n"), "unknown field type")
+end

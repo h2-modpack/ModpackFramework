@@ -104,3 +104,36 @@ function TestDiscovery:testSpecialMissingSpecialStateIsSkipped()
     lu.assertEquals(#warnings, 1)
     lu.assertStrContains(warnings[1], "missing public.store")
 end
+
+function TestDiscovery:testSpecialMissingDrawEntrypointsWarnsButStillDiscovers()
+    local previousDebugMode = config.DebugMode
+    config.DebugMode = true
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-special"] = {
+            definition = {
+                modpack = "test-pack",
+                special = true,
+                name = "My Special",
+                apply = function() end,
+                revert = function() end,
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+            }, {}),
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+        lu.assertEquals(#discovery.specials, 1)
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+    config.DebugMode = previousDebugMode
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "exposes neither DrawTab nor DrawQuickContent")
+end

@@ -121,16 +121,50 @@ function Framework.createHash(discovery, config, lib, packId)
     end
 
     -- Encode/decode delegates to the field type defined in lib.FieldTypes
-    local function EncodeValue(field, value)
-        return lib.FieldTypes[field.type].toHash(field, value)
+    local function EncodeValue(field, value, entryLabel)
+        local fieldType = lib.FieldTypes[field.type]
+        if not fieldType then
+            lib.warn(packId, config.DebugMode,
+                "GetConfigHash: skipping %s '%s' with unknown field type '%s'",
+                entryLabel, tostring(field._schemaKey or KeyStr(field.configKey)), tostring(field.type))
+            return nil
+        end
+        return fieldType.toHash(field, value)
     end
 
-    local function DecodeValue(field, str)
-        return lib.FieldTypes[field.type].fromHash(field, str)
+    local function DecodeValue(field, str, entryLabel)
+        local fieldType = lib.FieldTypes[field.type]
+        if not fieldType then
+            lib.warn(packId, config.DebugMode,
+                "ApplyConfigHash: defaulting %s '%s' with unknown field type '%s'",
+                entryLabel, tostring(field._schemaKey or KeyStr(field.configKey)), tostring(field.type))
+            return field.default
+        end
+        return fieldType.fromHash(field, str)
     end
 
     local function IsSchemaConfigField(field)
         return field and field.type ~= "separator" and field.configKey ~= nil
+    end
+
+    local function GetSchemaConfigFields(schema)
+        if type(schema) ~= "table" then
+            return {}
+        end
+
+        local configFields = rawget(schema, "_configFields")
+        if configFields then
+            return configFields
+        end
+
+        configFields = {}
+        for _, field in ipairs(schema) do
+            if IsSchemaConfigField(field) then
+                table.insert(configFields, field)
+            end
+        end
+        schema._configFields = configFields
+        return configFields
     end
 
     -- =============================================================================
@@ -171,7 +205,10 @@ function Framework.createHash(discovery, config, lib, packId)
                     current = discovery.getOptionValue(m, opt.configKey)
                 end
                 if current ~= opt.default then
-                    kv[opt._hashKey or (m.id .. "." .. opt.configKey)] = EncodeValue(opt, current)
+                    local encoded = EncodeValue(opt, current, "option")
+                    if encoded ~= nil then
+                        kv[opt._hashKey or (m.id .. "." .. opt.configKey)] = encoded
+                    end
                 end
                 end
             end
@@ -194,11 +231,12 @@ function Framework.createHash(discovery, config, lib, packId)
             -- State schema values (omit if matches field default)
             local schema = special.stateSchema
             if schema then
-                for _, field in ipairs(schema) do
-                    if IsSchemaConfigField(field) then
-                        local current = ReadPersisted(special.mod, field.configKey)
-                        if current ~= field.default then
-                            kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))] = EncodeValue(field, current)
+                for _, field in ipairs(GetSchemaConfigFields(schema)) do
+                    local current = ReadPersisted(special.mod, field.configKey)
+                    if current ~= field.default then
+                        local encoded = EncodeValue(field, current, "schema field")
+                        if encoded ~= nil then
+                            kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))] = encoded
                         end
                     end
                 end
@@ -256,7 +294,7 @@ function Framework.createHash(discovery, config, lib, packId)
                 if opt.type ~= "separator" and opt.configKey ~= nil then
                     local stored = kv[opt._hashKey or (m.id .. "." .. opt.configKey)]
                     if stored ~= nil then
-                        discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored))
+                        discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored, "option"))
                     else
                         discovery.setOptionValue(m, opt.configKey, opt.default)
                     end
@@ -271,14 +309,12 @@ function Framework.createHash(discovery, config, lib, packId)
 
             local schema = special.stateSchema
             if schema then
-                for _, field in ipairs(schema) do
-                    if IsSchemaConfigField(field) then
-                        local storedField = kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))]
-                        if storedField ~= nil then
-                            WritePersisted(special.mod, field.configKey, DecodeValue(field, storedField))
-                        else
-                            WritePersisted(special.mod, field.configKey, field.default)
-                        end
+                for _, field in ipairs(GetSchemaConfigFields(schema)) do
+                    local storedField = kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))]
+                    if storedField ~= nil then
+                        WritePersisted(special.mod, field.configKey, DecodeValue(field, storedField, "schema field"))
+                    else
+                        WritePersisted(special.mod, field.configKey, field.default)
                     end
                 end
                 local specialState = GetSpecialState(special.mod)
