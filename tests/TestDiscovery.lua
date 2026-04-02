@@ -316,7 +316,7 @@ function TestDiscovery:testPatchOnlyModuleIsDiscovered()
                 id = "PatchOnly",
                 name = "PatchOnly",
                 category = "General",
-                dataMutation = true,
+                affectsRunData = true,
                 patchPlan = function() end,
             },
             store = lib.createStore({
@@ -332,42 +332,7 @@ function TestDiscovery:testPatchOnlyModuleIsDiscovered()
     end)
 end
 
-function TestDiscovery:testMutationModeMismatchWarns()
-    local previousDebugMode = config.DebugMode
-    config.DebugMode = true
-    CaptureWarnings()
-
-    withMockModules({
-        ["test-mismatch"] = {
-            definition = {
-                modpack = "test-pack",
-                id = "Mismatch",
-                name = "Mismatch",
-                category = "General",
-                dataMutation = true,
-                mutationMode = lib.MutationMode.Manual,
-                patchPlan = function() end,
-            },
-            store = lib.createStore({
-                Enabled = false,
-                DebugMode = false,
-            }),
-        },
-    }, function()
-        local discovery = Framework.createDiscovery("test-pack", config, lib)
-        discovery.run()
-        lu.assertEquals(#discovery.modules, 1)
-    end)
-
-    local warnings = Warnings
-    RestoreWarnings()
-    config.DebugMode = previousDebugMode
-
-    lu.assertEquals(#warnings, 1)
-    lu.assertStrContains(warnings[1], "does not match inferred mutation shape")
-end
-
-function TestDiscovery:testDataMutationWithoutPatchOrManualWarnsAndSkips()
+function TestDiscovery:testAffectsRunDataWithoutPatchOrManualWarnsAndSkips()
     local previousDebugMode = config.DebugMode
     config.DebugMode = true
     CaptureWarnings()
@@ -379,7 +344,7 @@ function TestDiscovery:testDataMutationWithoutPatchOrManualWarnsAndSkips()
                 id = "Invalid",
                 name = "Invalid",
                 category = "General",
-                dataMutation = true,
+                affectsRunData = true,
             },
             store = lib.createStore({
                 Enabled = false,
@@ -397,8 +362,119 @@ function TestDiscovery:testDataMutationWithoutPatchOrManualWarnsAndSkips()
     config.DebugMode = previousDebugMode
 
     lu.assertEquals(#warnings, 2)
-    lu.assertStrContains(warnings[1], "dataMutation=true but module exposes neither patchPlan nor apply/revert")
-    lu.assertStrContains(warnings[2], "missing id, apply/revert, or patchPlan")
+    lu.assertStrContains(warnings[1], "affectsRunData=true but module exposes neither patchPlan nor apply/revert")
+    lu.assertStrContains(warnings[2], "missing id or lifecycle")
+end
+
+function TestDiscovery:testSetModuleEnabledDoesNotPersistWhenEnableFails()
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-broken"] = {
+            definition = {
+                modpack = "test-pack",
+                id = "BrokenEnable",
+                name = "BrokenEnable",
+                category = "General",
+                affectsRunData = true,
+                apply = function()
+                    error("enable boom")
+                end,
+                revert = function() end,
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+            }),
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+
+        local module = discovery.modulesById["BrokenEnable"]
+        local ok, err = discovery.setModuleEnabled(module, true)
+
+        lu.assertFalse(ok)
+        lu.assertStrContains(tostring(err), "enable boom")
+        lu.assertFalse(discovery.isModuleEnabled(module))
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "enable failed")
+end
+
+function TestDiscovery:testSetSpecialEnabledDoesNotPersistWhenDisableFails()
+    CaptureWarnings()
+
+    withMockModules({
+        ["test-special"] = {
+            definition = {
+                modpack = "test-pack",
+                special = true,
+                name = "Broken Special",
+                affectsRunData = true,
+                apply = function() end,
+                revert = function()
+                    error("disable boom")
+                end,
+                stateSchema = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
+            },
+            store = lib.createStore({
+                Enabled = true,
+                DebugMode = false,
+                Flag = false,
+            }, {
+                stateSchema = {
+                    { type = "checkbox", configKey = "Flag", default = false },
+                },
+            }),
+            DrawTab = function() end,
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+
+        local special = discovery.specials[1]
+        local ok, err = discovery.setSpecialEnabled(special, false)
+
+        lu.assertFalse(ok)
+        lu.assertStrContains(tostring(err), "disable boom")
+        lu.assertTrue(discovery.isSpecialEnabled(special))
+    end)
+
+    local warnings = Warnings
+    RestoreWarnings()
+
+    lu.assertEquals(#warnings, 1)
+    lu.assertStrContains(warnings[1], "disable failed")
+end
+
+function TestDiscovery:testNonRunDataModuleWithoutLifecycleIsDiscovered()
+    withMockModules({
+        ["test-ui-only"] = {
+            definition = {
+                modpack = "test-pack",
+                id = "UiOnly",
+                name = "UiOnly",
+                category = "General",
+                affectsRunData = false,
+            },
+            store = lib.createStore({
+                Enabled = false,
+                DebugMode = false,
+            }),
+        },
+    }, function()
+        local discovery = Framework.createDiscovery("test-pack", config, lib)
+        discovery.run()
+        lu.assertEquals(#discovery.modules, 1)
+        lu.assertEquals(discovery.modules[1].id, "UiOnly")
+    end)
 end
 
 function TestDiscovery:testRegularOptionsMissingUiStateWarnsAndSkipsOptionRendering()

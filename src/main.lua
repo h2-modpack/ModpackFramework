@@ -72,7 +72,7 @@ local function ValidateInitParams(params, lib)
 
     local sidebarOrder = params.def.sidebarOrder
     if sidebarOrder ~= nil and sidebarOrder ~= "special-first" and sidebarOrder ~= "category-first" then
-        lib.warn(params.packId, true,
+        lib.contractWarn(params.packId,
             "Framework.init: unknown sidebarOrder '%s'; defaulting to 'special-first'",
             tostring(sidebarOrder))
         params.def.sidebarOrder = "special-first"
@@ -81,7 +81,7 @@ local function ValidateInitParams(params, lib)
     local groupStyleDefault = params.def.groupStyleDefault
     if groupStyleDefault ~= nil and groupStyleDefault ~= "collapsing" and groupStyleDefault ~= "separator" and
         groupStyleDefault ~= "flat" then
-        lib.warn(params.packId, true,
+        lib.contractWarn(params.packId,
             "Framework.init: unknown groupStyleDefault '%s'; defaulting to 'collapsing'",
             tostring(groupStyleDefault))
         params.def.groupStyleDefault = "collapsing"
@@ -94,13 +94,12 @@ end
 
 --- Scan saved profiles against the current discovered key surface.
 --- Warns when a profile contains a field key for a known module or special that
---- no longer exists — indicating a likely rename. Namespaces absent from discovery
---- are skipped silently (module not installed vs. renamed is indistinguishable).
----
---- @param packId string
---- @param profiles table  — array of { Name, Hash, Tooltip }
---- @param discovery table — populated discovery object (after discovery.run)
---- @param lib table
+--- no longer exists, indicating a likely rename. Namespaces absent from discovery
+--- are skipped silently because "not installed" and "renamed" are indistinguishable.
+--- @param packId string Pack identifier used in warnings.
+--- @param profiles table Array of saved profile tables `{ Name, Hash, Tooltip }`.
+--- @param discovery table Populated discovery object after `discovery.run(...)`.
+--- @param lib table Adamant Modpack Lib export.
 local function AuditSavedProfiles(packId, profiles, discovery, lib)
     -- Build known field surface from discovery.
     -- Regular modules: namespace = definition.id, fields = flat option configKeys.
@@ -155,11 +154,11 @@ local function AuditSavedProfiles(packId, profiles, discovery, lib)
                         local moduleFields  = knownModules[namespace]
                         local specialFields = knownSpecials[namespace]
                         if moduleFields and not moduleFields[field] then
-                            lib.warn(packId, true,
+                            lib.contractWarn(packId,
                                 "Profile '%s': unrecognized key '%s.%s' — possible rename or removed option",
                                 profileLabel, namespace, field)
                         elseif specialFields and not specialFields[field] then
-                            lib.warn(packId, true,
+                            lib.contractWarn(packId,
                                 "Profile '%s': unrecognized key '%s.%s' — possible rename or removed field",
                                 profileLabel, namespace, field)
                         end
@@ -248,8 +247,10 @@ public.SidebarOrder = {
     CATEGORY_FIRST = "category-first",
 }
 
---- Returns a stable imgui render callback for the given packId.
+--- Return a stable imgui render callback for the given pack.
 --- Call once at startup; the callback late-binds to the current pack instance.
+--- @param packId string Pack identifier passed to `Framework.init(...)`.
+--- @return function render Callback suitable for `rom.gui.add_imgui(...)`.
 public.getRenderer = function(packId)
     return function()
         local pack = _packs[packId]
@@ -260,8 +261,10 @@ public.getRenderer = function(packId)
     end
 end
 
---- Returns a stable menu bar callback for the given packId.
+--- Return a stable menu-bar callback for the given pack.
 --- Call once at startup; the callback late-binds to the current pack instance.
+--- @param packId string Pack identifier passed to `Framework.init(...)`.
+--- @return function addMenuBar Callback suitable for `rom.gui.add_to_menu_bar(...)`.
 public.getMenuBar = function(packId)
     return function()
         local pack = _packs[packId]

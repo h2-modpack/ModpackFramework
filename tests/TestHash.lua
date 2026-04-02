@@ -202,6 +202,78 @@ function TestHashOmitDefaults:testOptionAtDefaultOmitted()
     lu.assertEquals(canonical, "_v=1")
 end
 
+function TestHashOmitDefaults:testTableValuedOptionAtDefaultOmitted()
+    local previousFieldType = lib.FieldTypes.tableblob
+    lib.FieldTypes.tableblob = {
+        validate = function() end,
+        toHash = function(_, value)
+            return tostring(value and value.value or "")
+        end,
+        fromHash = function(_, str)
+            return { value = str }
+        end,
+        toStaging = function(value)
+            return rom.game.DeepCopyTable(value or {})
+        end,
+        draw = function(_, _, value)
+            return value, false
+        end,
+    }
+
+    local opts = {
+        { type = "tableblob", configKey = "Blob", default = { value = "A" } },
+    }
+    local discovery = MockDiscovery.create({
+        { id = "A", category = "Cat1", enabled = false, default = false, options = opts },
+    })
+    discovery.modules[1].mod.config.Blob = { value = "A" }
+
+    local GetHash = withDiscovery(discovery)
+    local canonical = GetHash()
+
+    lib.FieldTypes.tableblob = previousFieldType
+    lu.assertEquals(canonical, "_v=1")
+end
+
+function TestHashOmitDefaults:testTableValuedSpecialFieldAtDefaultOmitted()
+    local previousFieldType = lib.FieldTypes.tableblob
+    lib.FieldTypes.tableblob = {
+        validate = function() end,
+        toHash = function(_, value)
+            return tostring(value and value.value or "")
+        end,
+        fromHash = function(_, str)
+            return { value = str }
+        end,
+        toStaging = function(value)
+            return rom.game.DeepCopyTable(value or {})
+        end,
+        draw = function(_, _, value)
+            return value, false
+        end,
+    }
+
+    local discovery = MockDiscovery.create(
+        {},
+        {},
+        {
+            {
+                modName = "adamant-Special",
+                config = { Blob = { value = "A" } },
+                stateSchema = {
+                    { type = "tableblob", configKey = "Blob", default = { value = "A" } },
+                },
+            },
+        }
+    )
+
+    local GetHash = withDiscovery(discovery)
+    local canonical = GetHash()
+
+    lib.FieldTypes.tableblob = previousFieldType
+    lu.assertEquals(canonical, "_v=1")
+end
+
 function TestHashOmitDefaults:testOptionNonDefaultIncluded()
     local opts = {
         { type = "dropdown", configKey = "Mode", values = {"Vanilla", "Always"}, default = "Vanilla" },
@@ -347,6 +419,79 @@ function TestHashApplyOrder:testRegularModuleApplySeesDecodedOptions()
     lu.assertEquals(module.mod.store.uiState.view.Mode, "Always")
 end
 
+function TestHashApplyOrder:testApplyHashReappliesAlreadyEnabledModuleWhenOptionsChange()
+    local appliedModes = {}
+    local modConfig = {
+        Enabled = true,
+        Mode = "Vanilla",
+    }
+
+    local module = {
+        modName = "adamant-A",
+        mod = {
+            config = modConfig,
+            store = lib.createStore(modConfig, {
+                options = {
+                    {
+                        type = "dropdown",
+                        configKey = "Mode",
+                        values = { "Vanilla", "Always" },
+                        default = "Vanilla",
+                    },
+                },
+            }),
+        },
+        definition = {
+            apply = function()
+                table.insert(appliedModes, modConfig.Mode)
+            end,
+            revert = function() end,
+        },
+        id = "A",
+        name = "A",
+        category = "Cat1",
+        default = false,
+        options = {
+            {
+                type = "dropdown",
+                configKey = "Mode",
+                values = { "Vanilla", "Always" },
+                default = "Vanilla",
+                _hashKey = "A.Mode",
+            },
+        },
+    }
+
+    local discovery = {
+        modules = { module },
+        modulesById = { A = module },
+        modulesWithOptions = { module },
+        specials = {},
+    }
+
+    function discovery.isModuleEnabled(m)
+        return m.mod.store.read("Enabled") == true
+    end
+
+    function discovery.setModuleEnabled(m, enabled)
+        return lib.setDefinitionEnabled(m.definition, m.mod.store, enabled)
+    end
+
+    function discovery.getOptionValue(m, configKey)
+        return m.mod.store.read(configKey)
+    end
+
+    function discovery.setOptionValue(m, configKey, value)
+        m.mod.store.write(configKey, value)
+    end
+
+    local _, ApplyHash = withDiscovery(discovery)
+    lu.assertTrue(ApplyHash("_v=1|A=1|A.Mode=Always"))
+    lu.assertTrue(modConfig.Enabled)
+    lu.assertEquals(modConfig.Mode, "Always")
+    lu.assertEquals(appliedModes, { "Always" })
+end
+
 function TestHashApplyOrder:testSpecialModuleApplySeesDecodedSchemaValues()
     local appliedWeapon = nil
     local reloadedWeapon = nil
@@ -404,6 +549,150 @@ function TestHashApplyOrder:testSpecialModuleApplySeesDecodedSchemaValues()
     lu.assertEquals(specialConfig.Weapon, "Staff")
     lu.assertEquals(reloadedWeapon, "Staff")
     lu.assertEquals(appliedWeapon, "Staff")
+end
+
+function TestHashApplyOrder:testApplyHashReturnsFalseWhenEnableFails()
+    CaptureWarnings()
+
+    local module = {
+        modName = "adamant-Broken",
+        mod = {
+            config = { Enabled = false },
+            store = lib.createStore({ Enabled = false }),
+        },
+        definition = {
+            apply = function() end,
+            revert = function() end,
+        },
+        id = "Broken",
+        name = "Broken",
+        category = "General",
+        default = false,
+    }
+
+    local discovery = {
+        modules = { module },
+        modulesById = { Broken = module },
+        modulesWithOptions = {},
+        specials = {},
+    }
+
+    function discovery.isModuleEnabled(m)
+        return m.mod.store.read("Enabled") == true
+    end
+
+    function discovery.setModuleEnabled()
+        return false, "enable boom"
+    end
+
+    local _, ApplyHash = withDiscovery(discovery)
+    lu.assertFalse(ApplyHash("_v=1|Broken=1"))
+    lu.assertFalse(module.mod.store.read("Enabled"))
+    lu.assertEquals(#Warnings, 1)
+    lu.assertStrContains(Warnings[1], "[test-pack] ApplyConfigHash failed; restoring previous state: enable boom")
+
+    RestoreWarnings()
+end
+
+function TestHashApplyOrder:testApplyHashRestoresPreviousConfigWhenLaterEnableFails()
+    CaptureWarnings()
+
+    local appliedModes = {}
+    local alphaConfig = {
+        Enabled = true,
+        Mode = "Vanilla",
+    }
+    local brokenConfig = {
+        Enabled = false,
+    }
+
+    local alpha = {
+        modName = "adamant-Alpha",
+        mod = {
+            config = alphaConfig,
+            store = lib.createStore(alphaConfig, {
+                options = {
+                    {
+                        type = "dropdown",
+                        configKey = "Mode",
+                        values = { "Vanilla", "Always" },
+                        default = "Vanilla",
+                    },
+                },
+            }),
+        },
+        definition = {
+            apply = function()
+                table.insert(appliedModes, alphaConfig.Mode)
+            end,
+            revert = function() end,
+        },
+        id = "Alpha",
+        name = "Alpha",
+        category = "Cat1",
+        default = false,
+        options = {
+            {
+                type = "dropdown",
+                configKey = "Mode",
+                values = { "Vanilla", "Always" },
+                default = "Vanilla",
+                _hashKey = "Alpha.Mode",
+            },
+        },
+    }
+
+    local broken = {
+        modName = "adamant-Broken",
+        mod = {
+            config = brokenConfig,
+            store = lib.createStore(brokenConfig),
+        },
+        definition = {
+            apply = function()
+                error("enable boom")
+            end,
+            revert = function() end,
+        },
+        id = "Broken",
+        name = "Broken",
+        category = "Cat1",
+        default = false,
+    }
+
+    local discovery = {
+        modules = { alpha, broken },
+        modulesById = { Alpha = alpha, Broken = broken },
+        modulesWithOptions = { alpha },
+        specials = {},
+    }
+
+    function discovery.isModuleEnabled(m)
+        return m.mod.store.read("Enabled") == true
+    end
+
+    function discovery.setModuleEnabled(m, enabled)
+        return lib.setDefinitionEnabled(m.definition, m.mod.store, enabled)
+    end
+
+    function discovery.getOptionValue(m, configKey)
+        return m.mod.store.read(configKey)
+    end
+
+    function discovery.setOptionValue(m, configKey, value)
+        m.mod.store.write(configKey, value)
+    end
+
+    local _, ApplyHash = withDiscovery(discovery)
+    lu.assertFalse(ApplyHash("_v=1|Alpha=1|Alpha.Mode=Always|Broken=1"))
+    lu.assertTrue(alpha.mod.store.read("Enabled"))
+    lu.assertEquals(alphaConfig.Mode, "Vanilla")
+    lu.assertFalse(broken.mod.store.read("Enabled"))
+    lu.assertEquals(appliedModes, { "Always", "Vanilla" })
+    lu.assertEquals(#Warnings, 1)
+    lu.assertStrContains(Warnings[1], "[test-pack] ApplyConfigHash failed; restoring previous state: ")
+
+    RestoreWarnings()
 end
 
 -- =============================================================================

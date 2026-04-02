@@ -76,6 +76,7 @@ dofile("src/main.lua")
 dofile("src/ui_theme.lua")
 dofile("src/discovery.lua")
 dofile("src/hash.lua")
+dofile("src/ui.lua")
 
 -- Test-level config: gates lib.warn in hash/discovery during tests
 config = { ModEnabled = true, DebugMode = false }
@@ -120,6 +121,7 @@ function MockDiscovery.create(moduleConfigs, optionConfigs, specialConfigs)
             mod = {
                 config = persisted,
                 store = lib.createStore(persisted, {
+                    id = mc.id,
                     options = mc.options,
                 }),
             },
@@ -152,6 +154,7 @@ function MockDiscovery.create(moduleConfigs, optionConfigs, specialConfigs)
 
     for _, sc in ipairs(specialConfigs) do
         local store = lib.createStore(sc.config, {
+            special = true,
             stateSchema = sc.stateSchema,
         })
         table.insert(discovery.specials, {

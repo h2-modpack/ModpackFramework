@@ -5,6 +5,16 @@
 -- Registration (add_imgui / add_to_menu_bar) is handled by Framework.init —
 -- this factory only returns { renderWindow, addMenuBar }.
 
+--- Create the main ImGui UI subsystem for one coordinator pack.
+--- @param discovery table Discovery object returned by `Framework.createDiscovery(...)`.
+--- @param hud table HUD object returned by `Framework.createHud(...)`.
+--- @param theme table Theme object returned by `Framework.createTheme(...)`.
+--- @param def table Coordinator definition table containing profile and layout metadata.
+--- @param config table Coordinator config table.
+--- @param lib table Adamant Modpack Lib export.
+--- @param packId string Pack identifier used in warnings.
+--- @param windowTitle string Window title shown in the mod menu.
+--- @return table ui UI object exposing `{ renderWindow, addMenuBar }`.
 function Framework.createUI(discovery, hud, theme, def, config, lib, packId, windowTitle)
     local ui                 = rom.ImGui
 
@@ -156,27 +166,13 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     -- TOGGLE HELPERS (event handlers — OK to touch Chalk here)
     -- =============================================================================
 
-    --- Apply enable/disable on the game side only (no Chalk, no staging).
-    --- Shared by ToggleModule and the master toggle.
-    local function SetModuleState(module, state)
-        local ok, err
-        if state then
-            ok, err = lib.applyDefinition(module.definition, module.mod.store)
-        else
-            ok, err = lib.revertDefinition(module.definition, module.mod.store)
-        end
-        if not ok then
-            lib.warn(packId, config.DebugMode,
-                "%s %s failed: %s", module.modName or "unknown", state and "apply" or "revert", err)
-        end
-    end
-
     local function ToggleModule(module, enabled)
-        -- Update staging
+        local ok = discovery.setModuleEnabled(module, enabled)
+        if not ok then
+            return
+        end
         staging.modules[module.id] = enabled
-        -- Write to Chalk + call enable/disable
-        discovery.setModuleEnabled(module, enabled)
-        if module.definition.dataMutation then
+        if lib.affectsRunData(module.definition) then
             SetupRunData()
         end
         InvalidateHash()
@@ -185,11 +181,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     end
 
     local function OnModuleUiStateFlushed(module)
-        -- Re-apply if data mutation (option may affect game tables).
-        -- disable() restores vanilla, enable() re-applies with the new option value.
-        if module.definition.dataMutation then
-            SetModuleState(module, false)
-            SetModuleState(module, true)
+        if lib.affectsRunData(module.definition) and staging.modules[module.id] then
             SetupRunData()
         end
         InvalidateHash()
@@ -197,13 +189,92 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     end
 
     local function ToggleSpecial(special, enabled)
+        local ok = discovery.setSpecialEnabled(special, enabled)
+        if not ok then
+            return
+        end
         staging.specials[special.modName] = enabled
-        discovery.setSpecialEnabled(special, enabled)
-        if special.definition.dataMutation then
+        if lib.affectsRunData(special.definition) then
             SetupRunData()
         end
         InvalidateHash()
         hud.updateHash()
+    end
+
+    --- Apply enable/disable on the game side only without persisting an entry's Enabled bit.
+    --- Used by the coordinator master toggle to suspend/resume already-selected entries.
+    local function SetEntryRuntimeState(entry, state)
+        local ok, err
+        if state then
+            ok, err = lib.applyDefinition(entry.definition, entry.mod.store)
+        else
+            ok, err = lib.revertDefinition(entry.definition, entry.mod.store)
+        end
+        if not ok then
+            lib.contractWarn(packId,
+                "%s %s failed: %s", entry.modName or "unknown", state and "apply" or "revert", err)
+        end
+        return ok, err
+    end
+
+    local function RollBackTouchedEntries(touched, previousState)
+        local rollbackErrors = {}
+        for i = #touched, 1, -1 do
+            local rollbackEntry = touched[i]
+            local rollbackOk, rollbackErr = SetEntryRuntimeState(rollbackEntry, previousState)
+            if not rollbackOk then
+                table.insert(rollbackErrors,
+                    string.format("%s: %s",
+                        tostring(rollbackEntry.modName or rollbackEntry.id or "unknown"),
+                        tostring(rollbackErr)))
+            end
+        end
+        if #rollbackErrors > 0 then
+            lib.contractWarn(packId,
+                "Enable Mod rollback incomplete: %s",
+                table.concat(rollbackErrors, "; "))
+        end
+    end
+
+    --- Apply the coordinator master toggle transactionally across all selected entries.
+    --- On failure, already-touched entries are restored to the previous pack runtime state.
+    --- @param state boolean
+    --- @return boolean, string|nil
+    local function SetPackRuntimeState(state)
+        local previousState = staging.ModEnabled == true
+        local touched = {}
+
+        for _, m in ipairs(discovery.modules) do
+            if staging.modules[m.id] then
+                local ok, err = SetEntryRuntimeState(m, state)
+                if not ok then
+                    lib.contractWarn(packId,
+                        "Enable Mod toggle failed; restoring previous runtime state")
+                    RollBackTouchedEntries(touched, previousState)
+                    return false, err
+                end
+                table.insert(touched, m)
+            end
+        end
+
+        for _, special in ipairs(discovery.specials) do
+            if staging.specials[special.modName] then
+                local ok, err = SetEntryRuntimeState(special, state)
+                if not ok then
+                    lib.contractWarn(packId,
+                        "Enable Mod toggle failed; restoring previous runtime state")
+                    RollBackTouchedEntries(touched, previousState)
+                    return false, err
+                end
+                table.insert(touched, special)
+            end
+        end
+
+        staging.ModEnabled = state
+        config.ModEnabled = state
+        SetupRunData()
+        hud.setModMarker(state)
+        return true, nil
     end
 
     --- Load a profile hash: decode, apply to all module configs, re-snapshot.
@@ -272,15 +343,17 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
     local function SetCategoryEnabled(category, flag)
         local modules = discovery.byCategory[category] or {}
-        local touchedDataMutation = false
+        local touchedRunData = false
         for _, m in ipairs(modules) do
-            staging.modules[m.id] = flag
-            discovery.setModuleEnabled(m, flag)
-            if m.definition.dataMutation then
-                touchedDataMutation = true
+            local ok = discovery.setModuleEnabled(m, flag)
+            if ok then
+                staging.modules[m.id] = flag
+            end
+            if ok and lib.affectsRunData(m.definition) then
+                touchedRunData = true
             end
         end
-        if touchedDataMutation then
+        if touchedRunData then
             SetupRunData()
         end
         InvalidateHash()
@@ -325,6 +398,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                         name = m.name or m.id,
                         imgui = ui,
                         uiState = uiState,
+                        commit = function(state)
+                            return lib.commitUiState(m.definition, m.mod.store, state)
+                        end,
                         draw = function()
                             for _, opt in ipairs(m.options) do
                                 if lib.isFieldVisible(opt, opts) then
@@ -415,9 +491,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     end
 
     local function OnSpecialUiStateFlushed(special)
-        if special.definition.dataMutation and staging.specials[special.modName] then
-            SetModuleState(special, false)
-            SetModuleState(special, true)
+        if lib.affectsRunData(special.definition) and staging.specials[special.modName] then
             SetupRunData()
         end
         InvalidateHash()
@@ -450,6 +524,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             imgui = ui,
             uiState = special.uiState,
             theme = theme,
+            commit = function(state)
+                return lib.commitUiState(special.definition, special.mod.store, state)
+            end,
             draw = special.mod.DrawQuickContent,
             onFlushed = function()
                 OnSpecialUiStateFlushed(special)
@@ -460,6 +537,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             imgui = ui,
             uiState = special.uiState,
             theme = theme,
+            commit = function(state)
+                return lib.commitUiState(special.definition, special.mod.store, state)
+            end,
             draw = special.mod.DrawTab,
             onFlushed = function()
                 OnSpecialUiStateFlushed(special)
@@ -821,22 +901,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         -- Read from staging, not Chalk
         local val, chg = ui.Checkbox("Enable Mod", staging.ModEnabled)
         if chg then
-            staging.ModEnabled = val
-            config.ModEnabled = val -- write to Chalk once (event handler)
-            -- Apply game-side enable/disable based on staging state.
-            -- Staging is preserved so re-enable restores previous selections.
-            for _, m in ipairs(discovery.modules) do
-                if staging.modules[m.id] then
-                    SetModuleState(m, val)
-                end
-            end
-            for _, special in ipairs(discovery.specials) do
-                if staging.specials[special.modName] then
-                    SetModuleState(special, val)
-                end
-            end
-            SetupRunData()
-            hud.setModMarker(val)
+            SetPackRuntimeState(val)
         end
         if ui.IsItemHovered() then ui.SetTooltip("Toggle the entire modpack on or off.") end
 

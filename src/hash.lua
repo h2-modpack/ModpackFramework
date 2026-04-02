@@ -12,6 +12,12 @@
 -- Keys are sorted alphabetically for stable output.
 -- Only non-default values are encoded — adding new fields with defaults is non-breaking.
 
+--- Create the hash/profile subsystem for one coordinator pack.
+--- @param discovery table Discovery object returned by `Framework.createDiscovery(...)`.
+--- @param config table Coordinator config table used for debug-gated warnings.
+--- @param lib table Adamant Modpack Lib export.
+--- @param packId string Pack identifier used in warnings.
+--- @return table hash Hash object exposing encode/decode, export, and import helpers.
 function Framework.createHash(discovery, config, lib, packId)
     local HASH_VERSION = 1
 
@@ -30,12 +36,141 @@ function Framework.createHash(discovery, config, lib, packId)
         return mod.store.uiState
     end
 
+    local function ClonePersistedValue(value)
+        if type(value) == "table" then
+            return rom.game.DeepCopyTable(value)
+        end
+        return value
+    end
+
+    local function ReloadManagedUiState()
+        for _, m in ipairs(discovery.modulesWithOptions) do
+            local uiState = GetUiState(m.mod)
+            if uiState and uiState.reloadFromConfig then
+                uiState.reloadFromConfig()
+            end
+        end
+        for _, special in ipairs(discovery.specials) do
+            local uiState = GetUiState(special.mod)
+            if uiState and uiState.reloadFromConfig then
+                uiState.reloadFromConfig()
+            end
+        end
+    end
+
+    local function CaptureApplySnapshot()
+        local snapshot = {
+            moduleEnabled = {},
+            moduleOptions = {},
+            specialEnabled = {},
+            specialFields = {},
+        }
+
+        for _, m in ipairs(discovery.modules) do
+            snapshot.moduleEnabled[m] = discovery.isModuleEnabled(m)
+        end
+
+        for _, m in ipairs(discovery.modulesWithOptions) do
+            local fields = {}
+            for _, opt in ipairs(m.options) do
+                if opt.type ~= "separator" and opt.configKey ~= nil then
+                    table.insert(fields, {
+                        key = opt.configKey,
+                        value = ClonePersistedValue(discovery.getOptionValue(m, opt.configKey)),
+                    })
+                end
+            end
+            snapshot.moduleOptions[m] = fields
+        end
+
+        for _, special in ipairs(discovery.specials) do
+            snapshot.specialEnabled[special] = discovery.isSpecialEnabled(special)
+            local fields = {}
+            local schema = special.stateSchema
+            if schema then
+                for _, field in ipairs(GetSchemaConfigFields(schema)) do
+                    table.insert(fields, {
+                        key = field.configKey,
+                        value = ClonePersistedValue(ReadPersisted(special.mod, field.configKey)),
+                    })
+                end
+            end
+            snapshot.specialFields[special] = fields
+        end
+
+        return snapshot
+    end
+
+    local function RestoreApplySnapshot(snapshot)
+        local rollbackErrors = {}
+
+        for _, m in ipairs(discovery.modulesWithOptions) do
+            local fields = snapshot.moduleOptions[m] or {}
+            for _, entry in ipairs(fields) do
+                discovery.setOptionValue(m, entry.key, ClonePersistedValue(entry.value))
+            end
+        end
+
+        for _, special in ipairs(discovery.specials) do
+            local fields = snapshot.specialFields[special] or {}
+            for _, entry in ipairs(fields) do
+                WritePersisted(special.mod, entry.key, ClonePersistedValue(entry.value))
+            end
+        end
+
+        ReloadManagedUiState()
+
+        for _, m in ipairs(discovery.modules) do
+            local previousEnabled = snapshot.moduleEnabled[m]
+            local currentEnabled = discovery.isModuleEnabled(m)
+            if previousEnabled or currentEnabled ~= previousEnabled then
+                local ok, err = discovery.setModuleEnabled(m, previousEnabled)
+                if ok == false then
+                    table.insert(rollbackErrors, string.format("%s: %s", tostring(m.modName or m.id), tostring(err)))
+                end
+            end
+        end
+
+        for _, special in ipairs(discovery.specials) do
+            local previousEnabled = snapshot.specialEnabled[special]
+            local currentEnabled = discovery.isSpecialEnabled(special)
+            if previousEnabled or currentEnabled ~= previousEnabled then
+                local ok, err = discovery.setSpecialEnabled(special, previousEnabled)
+                if ok == false then
+                    table.insert(rollbackErrors,
+                        string.format("%s: %s", tostring(special.modName), tostring(err)))
+                end
+            end
+        end
+
+        if #rollbackErrors > 0 then
+            return false, table.concat(rollbackErrors, "; ")
+        end
+        return true, nil
+    end
+
+    local function FailApplyHash(snapshot, err)
+        lib.contractWarn(packId,
+            "ApplyConfigHash failed; restoring previous state: %s",
+            tostring(err))
+        local rollbackOk, rollbackErr = RestoreApplySnapshot(snapshot)
+        if not rollbackOk then
+            lib.contractWarn(packId,
+                "ApplyConfigHash rollback incomplete: %s",
+                tostring(rollbackErr))
+        end
+        return false
+    end
+
     local BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
     -- =============================================================================
     -- BASE62 (used for fingerprint generation)
     -- =============================================================================
 
+    --- Encode a non-negative integer as a base62 string.
+    --- @param n number Integer value in the supported hash range.
+    --- @return string encoded
     function Hash.EncodeBase62(n)
         if n == 0 then return "0" end
         local result = ""
@@ -47,6 +182,9 @@ function Framework.createHash(discovery, config, lib, packId)
         return result
     end
 
+    --- Decode a base62 string produced by `Hash.EncodeBase62(...)`.
+    --- @param str string Base62-encoded string.
+    --- @return number|nil decoded Decoded integer, or nil when the string is invalid.
     function Hash.DecodeBase62(str)
         local n = 0
         for i = 1, #str do
@@ -125,7 +263,7 @@ function Framework.createHash(discovery, config, lib, packId)
     local function EncodeValue(field, value, entryLabel)
         local fieldType = lib.FieldTypes[field.type]
         if not fieldType then
-            lib.warn(packId, config.DebugMode,
+            lib.contractWarn(packId,
                 "GetConfigHash: skipping %s '%s' with unknown field type '%s'",
                 entryLabel, tostring(field._schemaKey or KeyStr(field.configKey)), tostring(field.type))
             return nil
@@ -136,7 +274,7 @@ function Framework.createHash(discovery, config, lib, packId)
     local function DecodeValue(field, str, entryLabel)
         local fieldType = lib.FieldTypes[field.type]
         if not fieldType then
-            lib.warn(packId, config.DebugMode,
+            lib.contractWarn(packId,
                 "ApplyConfigHash: defaulting %s '%s' with unknown field type '%s'",
                 entryLabel, tostring(field._schemaKey or KeyStr(field.configKey)), tostring(field.type))
             return field.default
@@ -148,9 +286,10 @@ function Framework.createHash(discovery, config, lib, packId)
     -- CONFIG HASH
     -- =============================================================================
 
-    --- Compute config hash from a staging table or from live module configs.
-    --- @param source table|nil If provided, reads source.modules[id] for enabled states and source.specials[modName] for special enabled states.
-    --- @return string canonical, string fingerprint
+    --- Compute the canonical config hash and short fingerprint for the current pack state.
+    --- @param source table|nil Optional staging snapshot with `modules[id]` and `specials[modName]` enabled states.
+    --- @return string canonical Stable canonical hash payload for export/profile save.
+    --- @return string fingerprint Short base62 fingerprint for HUD display.
     function Hash.GetConfigHash(source)
         local kv = {}
 
@@ -174,7 +313,7 @@ function Framework.createHash(discovery, config, lib, packId)
             for _, opt in ipairs(m.options) do
                 if opt.type ~= "separator" and opt.configKey ~= nil then
                     local current = discovery.getOptionValue(m, opt.configKey)
-                    if current ~= opt.default then
+                    if not lib.valuesEqual(opt, current, opt.default) then
                         local encoded = EncodeValue(opt, current, "option")
                         if encoded ~= nil then
                             kv[opt._hashKey or (m.id .. "." .. opt.configKey)] = encoded
@@ -203,7 +342,7 @@ function Framework.createHash(discovery, config, lib, packId)
             if schema then
                 for _, field in ipairs(GetSchemaConfigFields(schema)) do
                     local current = ReadPersisted(special.mod, field.configKey)
-                    if current ~= field.default then
+                    if not lib.valuesEqual(field, current, field.default) then
                         local encoded = EncodeValue(field, current, "schema field")
                         if encoded ~= nil then
                             kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))] = encoded
@@ -219,9 +358,9 @@ function Framework.createHash(discovery, config, lib, packId)
         return canonical, Fingerprint(canonical)
     end
 
-    --- Apply a canonical config hash to module configs.
-    --- @param hash string The canonical key-value string to decode
-    --- @return boolean success
+    --- Apply a canonical config hash to the pack, with rollback on later failure.
+    --- @param hash string Canonical hash payload to decode and apply.
+    --- @return boolean success True when the full import completed successfully.
     function Hash.ApplyConfigHash(hash)
         if hash == nil or hash == "" then
             lib.warn(packId, config.DebugMode, "ApplyConfigHash: empty hash")
@@ -238,11 +377,12 @@ function Framework.createHash(discovery, config, lib, packId)
 
         local version = tonumber(kv["_v"]) or 1
         if version > HASH_VERSION then
-            lib.warn(packId, config.DebugMode,
+            lib.contractWarn(packId,
                 "ApplyConfigHash: hash version %d is newer than supported (%d) — some settings may not apply",
                 version, HASH_VERSION)
         end
 
+        local snapshot = CaptureApplySnapshot()
         local moduleTargets = {}
         local specialTargets = {}
 
@@ -258,53 +398,58 @@ function Framework.createHash(discovery, config, lib, packId)
             end
         end
 
-        -- Inline option values
-        for _, m in ipairs(discovery.modulesWithOptions) do
-            for _, opt in ipairs(m.options) do
-                if opt.type ~= "separator" and opt.configKey ~= nil then
-                    local stored = kv[opt._hashKey or (m.id .. "." .. opt.configKey)]
-                    if stored ~= nil then
-                        discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored, "option"))
-                    else
-                        discovery.setOptionValue(m, opt.configKey, opt.default)
+        local okWrite, writeErr = xpcall(function()
+            -- Inline option values
+            for _, m in ipairs(discovery.modulesWithOptions) do
+                for _, opt in ipairs(m.options) do
+                    if opt.type ~= "separator" and opt.configKey ~= nil then
+                        local stored = kv[opt._hashKey or (m.id .. "." .. opt.configKey)]
+                        if stored ~= nil then
+                            discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored, "option"))
+                        else
+                            discovery.setOptionValue(m, opt.configKey, opt.default)
+                        end
                     end
                 end
             end
-            local uiState = GetUiState(m.mod)
-            if uiState and uiState.reloadFromConfig then
-                uiState.reloadFromConfig()
-            end
-        end
 
-        -- Special module enabled states and state schema values
-        for _, special in ipairs(discovery.specials) do
-            local storedEnabled = kv[special.modName]
-            specialTargets[special] = storedEnabled == "1"
+            -- Special module enabled states and state schema values
+            for _, special in ipairs(discovery.specials) do
+                local storedEnabled = kv[special.modName]
+                specialTargets[special] = storedEnabled == "1"
 
-            local schema = special.stateSchema
-            if schema then
-                for _, field in ipairs(GetSchemaConfigFields(schema)) do
-                    local storedField = kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))]
-                    if storedField ~= nil then
-                        WritePersisted(special.mod, field.configKey, DecodeValue(field, storedField, "schema field"))
-                    else
-                        WritePersisted(special.mod, field.configKey, field.default)
+                local schema = special.stateSchema
+                if schema then
+                    for _, field in ipairs(GetSchemaConfigFields(schema)) do
+                        local storedField = kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))]
+                        if storedField ~= nil then
+                            WritePersisted(special.mod, field.configKey, DecodeValue(field, storedField, "schema field"))
+                        else
+                            WritePersisted(special.mod, field.configKey, field.default)
+                        end
                     end
                 end
-                local uiState = GetUiState(special.mod)
-                if uiState and uiState.reloadFromConfig then
-                    uiState.reloadFromConfig()
-                end
             end
+        end, debug.traceback)
+        if not okWrite then
+            return FailApplyHash(snapshot, writeErr)
         end
+
+        ReloadManagedUiState()
 
         -- Apply enabled states after all decoded values are in place.
         for _, m in ipairs(discovery.modules) do
-            discovery.setModuleEnabled(m, moduleTargets[m])
+            local ok, err = discovery.setModuleEnabled(m, moduleTargets[m])
+            if ok == false then
+                return FailApplyHash(snapshot, err)
+            end
         end
 
         for _, special in ipairs(discovery.specials) do
-            discovery.setSpecialEnabled(special, specialTargets[special])
+            local ok, err = discovery.setSpecialEnabled(special, specialTargets[special])
+            if ok == false then
+                return FailApplyHash(snapshot, err)
+            end
         end
 
         return true

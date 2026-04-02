@@ -1,9 +1,22 @@
-# adamant-Modpack_Framework
+# adamant-ModpackFramework
 
-Reusable modpack orchestration framework for Hades 2. Provides discovery, config hashing, HUD fingerprint, and the shared UI window. Used by modpack coordinator mods — not installed directly.
+Reusable coordinator framework for adamant modpacks.
 
-Part of the [H2 Modpack](https://github.com/h2-modpack/h2-modular-modpack).
+It owns:
+- discovery
+- config hashing and profile load
+- HUD fingerprint rendering
+- the shared coordinator UI
 
-## Install
+## Docs
 
-Install via r2modman or Thunderstore. Coordinator mods list this as a dependency automatically.
+- [COORDINATOR_GUIDE.md](COORDINATOR_GUIDE.md)
+- [HASH_PROFILE_ABI.md](HASH_PROFILE_ABI.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+
+## Validation
+
+```bash
+cd adamant-ModpackFramework
+lua5.1 tests/all.lua
+```

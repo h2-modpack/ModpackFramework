@@ -8,6 +8,14 @@
 -- Multiple packs stack vertically: each pack's component is named
 -- "ModpackMark_<packId>" and offset by packIndex * 24px.
 
+--- Create the HUD subsystem for one coordinator pack.
+--- @param packId string Pack identifier used for component naming.
+--- @param packIndex number Stable vertical stacking index for this pack.
+--- @param hash table Hash subsystem returned by `Framework.createHash(...)`.
+--- @param theme table Theme object returned by `Framework.createTheme(...)`.
+--- @param config table Coordinator config table containing `ModEnabled`.
+--- @param modutil table ModUtil mod reference used for the HUD hook registration.
+--- @return table hud HUD object exposing marker/hash update helpers.
 function Framework.createHud(packId, packIndex, hash, theme, config, modutil)
     assert(ScreenData and ScreenData.HUD and ScreenData.HUD.ComponentData,
         "Framework.createHud: game HUD globals are not ready; call Framework.init after game load")
@@ -57,8 +65,8 @@ function Framework.createHud(packId, packIndex, hash, theme, config, modutil)
         displayedHash = currentHash
     end
 
-    modutil.mod.Path.Wrap("ShowHealthUI", function(base)
-        base()
+    modutil.mod.Path.Wrap("ShowHealthUI", function(base, args)
+        base(args)
         if config.ModEnabled then
             displayedHash = nil
             UpdateModMark()

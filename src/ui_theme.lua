@@ -4,6 +4,8 @@
 -- Purely declarative — no runtime dependencies.
 -- Exposes Framework.createTheme() — called once per coordinator.
 
+--- Create the shared theme/layout constants used by the Framework UI and HUD.
+--- @return table theme Theme object exposing colors, ImGui flags, layout ratios, and push/pop helpers.
 function Framework.createTheme()
     local ui                 = rom.ImGui
     local uiCol              = rom.ImGuiCol

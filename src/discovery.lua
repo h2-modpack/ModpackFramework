@@ -6,6 +6,11 @@
 -- Special modules: definition.special = true.
 -- Modules are sorted alphabetically by display name within each category.
 
+--- Create the discovery subsystem for one coordinator pack.
+--- @param packId string Pack identifier used to filter opted-in modules.
+--- @param config table Coordinator config table containing at least `DebugMode`.
+--- @param lib table Adamant Modpack Lib export.
+--- @return table discovery Discovery object with `run`, state accessors, and discovered entry lists.
 function Framework.createDiscovery(packId, config, lib)
     local Discovery = {}
 
@@ -44,6 +49,10 @@ function Framework.createDiscovery(packId, config, lib)
     -- DISCOVERY
     -- -------------------------------------------------------------------------
 
+    --- Discover all modules/specials for this pack and build category layouts.
+    --- @param groupStyle table|nil Optional per-category/per-group style overrides.
+    --- @param groupStyleDefault string|nil Default group style when not overridden.
+    --- @param categoryOrder table|nil Optional ordered list of category names to pin first.
     function Discovery.run(groupStyle, groupStyleDefault, categoryOrder)
         local mods = rom.mods
 
@@ -85,7 +94,7 @@ function Framework.createDiscovery(packId, config, lib)
                 for _, item in ipairs(entries) do
                     table.insert(labels, item.modName .. " (" .. item.kind .. ")")
                 end
-                lib.warn(packId, true,
+                lib.contractWarn(packId,
                     "reserved hash namespace '%s' is used by: %s; skipping all conflicting entries",
                     tostring(namespace), table.concat(labels, ", "))
             elseif #entries > 1 then
@@ -95,7 +104,7 @@ function Framework.createDiscovery(packId, config, lib)
                 for _, item in ipairs(entries) do
                     table.insert(labels, item.modName .. " (" .. item.kind .. ")")
                 end
-                lib.warn(packId, true,
+                lib.contractWarn(packId,
                     "duplicate hash namespace '%s' across entries: %s; skipping all conflicting entries",
                     tostring(namespace), table.concat(labels, ", "))
             end
@@ -105,46 +114,32 @@ function Framework.createDiscovery(packId, config, lib)
             local modName = entry.modName
             local mod     = entry.mod
             local def     = entry.def
-            local inferredMutationMode, mutationInfo = lib.inferMutationMode(def)
+            local inferredMutationShape, mutationInfo = lib.inferMutationShape(def)
 
-            if def.mutationMode ~= nil then
-                local isKnownMode = def.mutationMode == lib.MutationMode.Patch
-                    or def.mutationMode == lib.MutationMode.Manual
-                    or def.mutationMode == lib.MutationMode.Hybrid
-                if not isKnownMode then
-                    lib.warn(packId, config.DebugMode,
-                        "%s: definition.mutationMode must be lib.MutationMode.Patch, Manual, or Hybrid; got %s",
-                        modName, tostring(def.mutationMode))
-                elseif inferredMutationMode and def.mutationMode ~= inferredMutationMode then
-                    lib.warn(packId, config.DebugMode,
-                        "%s: definition.mutationMode=%s does not match inferred mutation shape %s",
-                        modName, tostring(def.mutationMode), tostring(inferredMutationMode))
-                end
-            end
-
-            if def.dataMutation and not inferredMutationMode then
-                lib.warn(packId, config.DebugMode,
-                    "%s: dataMutation=true but module exposes neither patchPlan nor apply/revert",
+            if lib.affectsRunData(def) and not inferredMutationShape then
+                lib.contractWarn(packId,
+                    "%s: affectsRunData=true but module exposes neither patchPlan nor apply/revert",
                     modName)
             end
 
             if def.special then
                 local hasLifecycle = mutationInfo.hasManual or mutationInfo.hasPatch
+                local lifecycleRequired = lib.affectsRunData(def)
                 if duplicateNamespaces[modName] then
                     -- Already warned once for the full collision set above.
-                elseif not def.name or not hasLifecycle then
-                    lib.warn(packId, config.DebugMode,
-                        "Skipping special %s: missing name, apply/revert, or patchPlan", modName)
+                elseif not def.name or (lifecycleRequired and not hasLifecycle) then
+                    lib.contractWarn(packId,
+                        "Skipping special %s: missing name or lifecycle (patchPlan/apply/revert)", modName)
                 elseif type(def.stateSchema) ~= "table" then
-                    lib.warn(packId, config.DebugMode,
+                    lib.contractWarn(packId,
                         "Skipping special %s: missing definition.stateSchema", modName)
                 else
                     local store = GetStore(mod)
                     if not store or type(store.read) ~= "function" or type(store.write) ~= "function" then
-                        lib.warn(packId, config.DebugMode,
+                        lib.contractWarn(packId,
                             "%s: special module is missing public.store", modName)
                     elseif not GetUiState(mod) then
-                        lib.warn(packId, config.DebugMode,
+                        lib.contractWarn(packId,
                             "%s: special module is missing public.store.uiState (managed UI state)", modName)
                     else
                         if def.stateSchema then
@@ -168,12 +163,13 @@ function Framework.createDiscovery(packId, config, lib)
                 end
             else
                 local hasLifecycle = mutationInfo.hasManual or mutationInfo.hasPatch
+                local lifecycleRequired = lib.affectsRunData(def)
                 if duplicateNamespaces[def.id] then
                     -- Already warned once for the full collision set above.
-                elseif not def.id or not hasLifecycle then
-                    lib.warn(packId, config.DebugMode, "Skipping %s: missing id, apply/revert, or patchPlan", modName)
+                elseif not def.id or (lifecycleRequired and not hasLifecycle) then
+                    lib.contractWarn(packId, "Skipping %s: missing id or lifecycle (patchPlan/apply/revert)", modName)
                 elseif not GetStore(mod) or type(GetStore(mod).read) ~= "function" or type(GetStore(mod).write) ~= "function" then
-                    lib.warn(packId, config.DebugMode, "%s: module is missing public.store", modName)
+                    lib.contractWarn(packId, "%s: module is missing public.store", modName)
                 else
                     local cat = def.category or "General"
                     local module = {
@@ -200,7 +196,7 @@ function Framework.createDiscovery(packId, config, lib)
                             if opt.type == "separator" then
                                 table.insert(validOptions, opt)
                             elseif type(opt.configKey) == "table" then
-                                lib.warn(packId, config.DebugMode,
+                                lib.contractWarn(packId,
                                     "%s: option configKey is a table -- table-path keys are only valid in stateSchema" ..
                                     " (special modules). Use a flat string key in def.options. Option skipped.", modName)
                             else
@@ -211,7 +207,7 @@ function Framework.createDiscovery(packId, config, lib)
                         module.options = validOptions
                         if #validOptions > 0 then
                             if not GetUiState(mod) then
-                                lib.warn(packId, config.DebugMode,
+                                lib.contractWarn(packId,
                                     "%s: module options are missing public.store.uiState (managed UI state)",
                                     modName)
                             else
@@ -295,6 +291,11 @@ function Framework.createDiscovery(packId, config, lib)
     -- LAYOUT BUILDER
     -- -------------------------------------------------------------------------
 
+    --- Build a grouped checkbox layout for one discovered category.
+    --- @param category string Category key.
+    --- @param groupStyle table|nil Optional per-category/per-group style overrides.
+    --- @param groupStyleDefault string|nil Default group style when not overridden.
+    --- @return table layout Array of grouped layout blocks for the UI.
     function Discovery.buildLayout(category, groupStyle, groupStyleDefault)
         local mods = Discovery.byCategory[category] or {}
         local groupOrder = {}
@@ -329,62 +330,74 @@ function Framework.createDiscovery(packId, config, lib)
     -- MODULE STATE ACCESS
     -- -------------------------------------------------------------------------
 
-    --- Read a module's current Enabled state from its own config.
+    --- Read a regular module's persisted Enabled state.
+    --- @param module table Discovered regular module entry.
+    --- @return boolean enabled
     function Discovery.isModuleEnabled(module)
         return ReadPersisted(module.mod, "Enabled") == true
     end
 
-    --- Write a module's Enabled state and call enable/disable.
+    --- Commit a regular module's Enabled state only after lifecycle succeeds.
+    --- @param module table Discovered regular module entry.
+    --- @param enabled boolean Desired enabled state.
+    --- @return boolean ok
+    --- @return string|nil err
     function Discovery.setModuleEnabled(module, enabled)
-        WritePersisted(module.mod, "Enabled", enabled)
-        local ok, err
-        if enabled then
-            ok, err = lib.applyDefinition(module.definition, GetStore(module.mod))
-        else
-            ok, err = lib.revertDefinition(module.definition, GetStore(module.mod))
-        end
+        local ok, err = lib.setDefinitionEnabled(module.definition, GetStore(module.mod), enabled)
         if not ok then
-            lib.warn(packId, config.DebugMode,
+            lib.contractWarn(packId,
                 "%s %s failed: %s", module.modName, enabled and "enable" or "disable", err)
         end
+        return ok, err
     end
 
-    --- Read a module option's current value from its config.
+    --- Read a regular module option value from persisted config.
+    --- @param module table Discovered regular module entry.
+    --- @param configKey string|table Option key/path.
+    --- @return any value
     function Discovery.getOptionValue(module, configKey)
         return ReadPersisted(module.mod, configKey)
     end
 
-    --- Write a module option's value to its config.
+    --- Write a regular module option value to persisted config.
+    --- @param module table Discovered regular module entry.
+    --- @param configKey string|table Option key/path.
+    --- @param value any Value to persist.
     function Discovery.setOptionValue(module, configKey, value)
         WritePersisted(module.mod, configKey, value)
     end
 
-    --- Read a special module's Enabled state from its config.
+    --- Read a special module's persisted Enabled state.
+    --- @param special table Discovered special entry.
+    --- @return boolean enabled
     function Discovery.isSpecialEnabled(special)
         return ReadPersisted(special.mod, "Enabled") == true
     end
 
-    --- Write a special module's Enabled state and call enable/disable.
+    --- Commit a special module's Enabled state only after lifecycle succeeds.
+    --- @param special table Discovered special entry.
+    --- @param enabled boolean Desired enabled state.
+    --- @return boolean ok
+    --- @return string|nil err
     function Discovery.setSpecialEnabled(special, enabled)
-        WritePersisted(special.mod, "Enabled", enabled)
-        local ok, err
-        if enabled then
-            ok, err = lib.applyDefinition(special.definition, GetStore(special.mod))
-        else
-            ok, err = lib.revertDefinition(special.definition, GetStore(special.mod))
-        end
+        local ok, err = lib.setDefinitionEnabled(special.definition, GetStore(special.mod), enabled)
         if not ok then
-            lib.warn(packId, config.DebugMode,
+            lib.contractWarn(packId,
                 "%s %s failed: %s", special.modName, enabled and "enable" or "disable", err)
         end
+        return ok, err
     end
 
-    --- Read a module or special's DebugMode state from its config.
+    --- Read a module or special's persisted DebugMode state.
+    --- @param entry table Discovered regular or special entry.
+    --- @return boolean enabled
     function Discovery.isDebugEnabled(entry)
         return ReadPersisted(entry.mod, "DebugMode") == true
     end
 
-    --- Write a module or special's DebugMode state to its config.
+    --- Write a module or special's DebugMode state to persisted config.
+    --- @param entry table Discovered regular or special entry.
+    --- @param val boolean Desired DebugMode state.
     function Discovery.setDebugEnabled(entry, val)
         WritePersisted(entry.mod, "DebugMode", val)
     end
