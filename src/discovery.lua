@@ -31,6 +31,15 @@ function Framework.createDiscovery(packId, config, lib)
         return store and store.uiState or nil
     end
 
+    local function SetEntryEnabled(entry, enabled)
+        local ok, err = lib.setDefinitionEnabled(entry.definition, GetStore(entry.mod), enabled)
+        if not ok then
+            lib.contractWarn(packId,
+                "%s %s failed: %s", entry.modName, enabled and "enable" or "disable", err)
+        end
+        return ok, err
+    end
+
     -- -------------------------------------------------------------------------
     -- DISCOVERY STATE
     -- -------------------------------------------------------------------------
@@ -343,12 +352,7 @@ function Framework.createDiscovery(packId, config, lib)
     --- @return boolean ok
     --- @return string|nil err
     function Discovery.setModuleEnabled(module, enabled)
-        local ok, err = lib.setDefinitionEnabled(module.definition, GetStore(module.mod), enabled)
-        if not ok then
-            lib.contractWarn(packId,
-                "%s %s failed: %s", module.modName, enabled and "enable" or "disable", err)
-        end
-        return ok, err
+        return SetEntryEnabled(module, enabled)
     end
 
     --- Read a regular module option value from persisted config.
@@ -380,12 +384,7 @@ function Framework.createDiscovery(packId, config, lib)
     --- @return boolean ok
     --- @return string|nil err
     function Discovery.setSpecialEnabled(special, enabled)
-        local ok, err = lib.setDefinitionEnabled(special.definition, GetStore(special.mod), enabled)
-        if not ok then
-            lib.contractWarn(packId,
-                "%s %s failed: %s", special.modName, enabled and "enable" or "disable", err)
-        end
-        return ok, err
+        return SetEntryEnabled(special, enabled)
     end
 
     --- Read a module or special's persisted DebugMode state.

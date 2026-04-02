@@ -166,39 +166,29 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     -- TOGGLE HELPERS (event handlers — OK to touch Chalk here)
     -- =============================================================================
 
-    local function ToggleModule(module, enabled)
-        local ok = discovery.setModuleEnabled(module, enabled)
-        if not ok then
-            return
-        end
-        staging.modules[module.id] = enabled
-        if lib.affectsRunData(module.definition) then
+    local function FinishUiChange(definition, enabled, category)
+        if lib.affectsRunData(definition) and enabled then
             SetupRunData()
         end
         InvalidateHash()
-        InvalidateCategoryStatus(module.category)
+        if category then
+            InvalidateCategoryStatus(category)
+        end
         hud.updateHash()
     end
 
-    local function OnModuleUiStateFlushed(module)
-        if lib.affectsRunData(module.definition) and staging.modules[module.id] then
-            SetupRunData()
-        end
-        InvalidateHash()
-        hud.updateHash()
-    end
-
-    local function ToggleSpecial(special, enabled)
-        local ok = discovery.setSpecialEnabled(special, enabled)
+    local function ToggleEntry(entry, enabled, stagingBucket, stagingKey, category)
+        local setter = entry.definition.special and discovery.setSpecialEnabled or discovery.setModuleEnabled
+        local ok = setter(entry, enabled)
         if not ok then
             return
         end
-        staging.specials[special.modName] = enabled
-        if lib.affectsRunData(special.definition) then
-            SetupRunData()
-        end
-        InvalidateHash()
-        hud.updateHash()
+        stagingBucket[stagingKey] = enabled
+        FinishUiChange(entry.definition, enabled, category)
+    end
+
+    local function OnUiStateFlushed(definition, enabled)
+        FinishUiChange(definition, enabled)
     end
 
     --- Apply enable/disable on the game side only without persisting an entry's Enabled bit.
@@ -385,7 +375,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             if m then
                 local currentVal = staging.modules[m.id] or false
                 local val, chg = ui.Checkbox(itemData.Name, currentVal)
-                if chg then ToggleModule(m, val) end
+                if chg then
+                    ToggleEntry(m, val, staging.modules, m.id, m.category)
+                end
                 if ui.IsItemHovered() and itemData.Tooltip and itemData.Tooltip ~= "" then
                     ui.SetTooltip(itemData.Tooltip)
                 end
@@ -418,7 +410,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                             end
                         end,
                         onFlushed = function()
-                            OnModuleUiStateFlushed(m)
+                            OnUiStateFlushed(m.definition, staging.modules[m.id])
                         end,
                     })
                     ui.Unindent()
@@ -490,12 +482,20 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         return cachedTabList
     end
 
-    local function OnSpecialUiStateFlushed(special)
-        if lib.affectsRunData(special.definition) and staging.specials[special.modName] then
-            SetupRunData()
-        end
-        InvalidateHash()
-        hud.updateHash()
+    local function BuildSpecialPassOpts(special)
+        return {
+            name = special.definition.name or special.modName,
+            imgui = ui,
+            uiState = special.uiState,
+            theme = theme,
+            commit = function(state)
+                return lib.commitUiState(special.definition, special.mod.store, state)
+            end,
+            draw = nil,
+            onFlushed = function()
+                OnUiStateFlushed(special.definition, staging.specials[special.modName])
+            end,
+        }
     end
 
     local function AuditAndResyncAllUiState()
@@ -519,32 +519,8 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
     for _, special in ipairs(discovery.specials) do
         specialByTabLabel[special._tabLabel] = special
-        specialQuickPassOpts[special.modName] = {
-            name = special.definition.name or special.modName,
-            imgui = ui,
-            uiState = special.uiState,
-            theme = theme,
-            commit = function(state)
-                return lib.commitUiState(special.definition, special.mod.store, state)
-            end,
-            draw = special.mod.DrawQuickContent,
-            onFlushed = function()
-                OnSpecialUiStateFlushed(special)
-            end,
-        }
-        specialTabPassOpts[special.modName] = {
-            name = special.definition.name or special.modName,
-            imgui = ui,
-            uiState = special.uiState,
-            theme = theme,
-            commit = function(state)
-                return lib.commitUiState(special.definition, special.mod.store, state)
-            end,
-            draw = special.mod.DrawTab,
-            onFlushed = function()
-                OnSpecialUiStateFlushed(special)
-            end,
-        }
+        specialQuickPassOpts[special.modName] = BuildSpecialPassOpts(special)
+        specialTabPassOpts[special.modName] = BuildSpecialPassOpts(special)
     end
 
     -- =============================================================================
@@ -616,7 +592,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         local enabled = staging.specials[special.modName] or false
         local val, chg = ui.Checkbox(special._enableLabel, enabled)
         if chg then
-            ToggleSpecial(special, val)
+            ToggleEntry(special, val, staging.specials, special.modName)
         end
         if ui.IsItemHovered() and special.definition.tooltip then
             ui.SetTooltip(special.definition.tooltip)
@@ -628,9 +604,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
         -- Delegate tab content to the module
         if special.mod.DrawTab then
-        local passOpts = specialTabPassOpts[special.modName]
-        passOpts.draw = special.mod.DrawTab
-        lib.runUiStatePass(passOpts)
+            local passOpts = specialTabPassOpts[special.modName]
+            passOpts.draw = special.mod.DrawTab
+            lib.runUiStatePass(passOpts)
         end
     end
 
