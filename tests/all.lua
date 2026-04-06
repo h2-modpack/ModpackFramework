@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Run all Framework tests
 -- =============================================================================
--- Usage: lua5.1 tests/all.lua (from the adamant-modpack-Framework directory)
+-- Usage: lua5.2 tests/all.lua (from the adamant-modpack-Framework directory)
 
 require('tests/TestUtils')
 require('tests/TestDiscovery')

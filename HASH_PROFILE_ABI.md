@@ -45,14 +45,15 @@ That means compatibility mistakes affect both imports and saved local presets.
 Treat the following as frozen after release unless you are doing deliberate compatibility work:
 
 - regular `definition.id`
-- regular option `configKey`
+- storage root `alias` (for both regular and special modules)
 - special module `modName`
-- special schema `configKey`
-- field `default`
-- field type `toHash(...)`
-- field type `fromHash(...)`
+- storage `default`
+- storage type `toHash(...)`
+- storage type `fromHash(...)`
 
 These are not cosmetic details. They are the wire format.
+
+`alias` is the hash key. `configKey` is the Chalk persistence path. If you declare an explicit `alias`, `configKey` can change freely without affecting hashes or saved profiles. If `alias` is omitted, it defaults to the stringified `configKey`, which means `configKey` is implicitly frozen for that root.
 
 ## Why Each One Matters
 
@@ -74,16 +75,17 @@ definition.id = "NewName"
 
 then old hashes and old profile entries no longer target the same module key space.
 
-### Regular `configKey`
+### Storage root `alias`
 
-Regular-module option values are encoded under:
+Storage root values are encoded under:
 
 ```text
-ModId.configKey=value
+ModId.alias=value
 ```
 
-Renaming a `configKey` breaks old hashes and old saved profile entries for that option unless you
-provide compatibility handling.
+`alias` is the hash key. If a root omits `alias`, it defaults to the stringified `configKey`, so `configKey` is effectively the hash key in that case.
+
+If you declare an explicit `alias`, you can rename `configKey` freely — the hash key is unchanged. If you did not declare an explicit `alias`, renaming `configKey` breaks old hashes and saved profile entries for that root unless you add compatibility handling.
 
 ### Special `modName`
 
@@ -95,12 +97,15 @@ adamant-SpecialName.configKey=value
 
 Changing `modName` is equivalent to changing a namespace prefix for every special field.
 
-### Special schema `configKey`
+### Special storage root `alias`
 
-Each schema-backed special field is serialized by its `configKey`.
+Special module storage values are encoded under:
 
-Renaming the key breaks old hashes for that field in the same way regular option `configKey`
-changes do.
+```text
+adamant-SpecialName.alias=value
+```
+
+The same alias/configKey rules apply: explicit `alias` decouples the hash key from the Chalk path; omitted `alias` means `configKey` is the hash key and is implicitly frozen.
 
 ### `default`
 
@@ -271,9 +276,10 @@ At minimum, confirm:
 
 Before changing a released module, ask:
 
-1. Am I changing `definition.id`, `modName`, `configKey`, `default`, `toHash`, or `fromHash`?
-2. If yes, what happens to old hashes and old saved profiles?
-3. Is this a harmless internal refactor, or am I actually changing the wire format?
-4. Do I need explicit compatibility handling and tests?
+1. Am I changing `definition.id`, `modName`, a storage root `alias`, `default`, `toHash`, or `fromHash`?
+2. If I'm changing `configKey` only — did I declare an explicit `alias`? If yes, the hash is unaffected. If no, this is an ABI change.
+3. If yes to 1, what happens to old hashes and old saved profiles?
+4. Is this a harmless internal refactor, or am I actually changing the wire format?
+5. Do I need explicit compatibility handling and tests?
 
 If you cannot answer those clearly, do not merge the change as "cleanup."

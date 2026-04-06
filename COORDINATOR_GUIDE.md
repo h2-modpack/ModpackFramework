@@ -65,8 +65,7 @@ Required:
 Optional `def` fields:
 - `groupStyle`
 - `groupStyleDefault`
-- `categoryOrder`
-- `sidebarOrder`
+- `categoryOrder` — ordered list of category and/or special names to pin first in the sidebar. Any mix of categories and specials is supported. Entries not in the list are appended alphabetically after the pinned ones. Unknown entries are warned and ignored.
 - `renderQuickSetup(ctx)`
 
 ## Discovery

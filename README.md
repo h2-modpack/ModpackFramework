@@ -27,5 +27,5 @@ Hash/profile ABI is compatibility-sensitive. Changes to ids, keys, defaults, or 
 
 ```bash
 cd adamant-ModpackFramework
-lua5.1 tests/all.lua
+lua5.2 tests/all.lua
 ```

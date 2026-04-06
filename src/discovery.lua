@@ -63,7 +63,7 @@ function Framework.createDiscovery(packId, config, lib)
     --- Discover all modules/specials for this pack and build category layouts.
     --- @param groupStyle table|nil Optional per-category/per-group style overrides.
     --- @param groupStyleDefault string|nil Default group style when not overridden.
-    --- @param categoryOrder table|nil Optional ordered list of category names to pin first.
+    --- @param categoryOrder table|nil Optional ordered list of category and/or special names to pin first in the sidebar.
     function Discovery.run(groupStyle, groupStyleDefault, categoryOrder)
         local mods = rom.mods
 

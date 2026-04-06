@@ -393,7 +393,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                             return lib.commitUiState(m.definition, m.mod.store, state)
                         end,
                         draw = function()
-                            lib.drawUiTree(ui, m.ui, uiState, winW * FIELD_MEDIUM)
+                            lib.drawUiTree(ui, m.ui, uiState, winW * FIELD_MEDIUM, m.definition.customTypes)
                         end,
                         onFlushed = function()
                             OnUiStateFlushed(m.definition, staging.modules[m.id])
@@ -594,7 +594,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                         end,
                         draw = function()
                             for _, node in ipairs(m.quickUi or {}) do
-                                lib.drawUiNode(ui, node, uiState, winW * FIELD_MEDIUM)
+                                lib.drawUiNode(ui, node, uiState, winW * FIELD_MEDIUM, m.definition.customTypes)
                             end
                         end,
                         onFlushed = function()
@@ -625,7 +625,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         if special.mod.DrawTab or (type(special.ui) == "table" and #special.ui > 0) then
             local passOpts = specialTabPassOpts[special.modName]
             passOpts.draw = passOpts.draw or special.mod.DrawTab or function(ui)
-                lib.drawUiTree(ui, special.ui, special.uiState, ui.GetWindowWidth() * FIELD_MEDIUM)
+                lib.drawUiTree(ui, special.ui, special.uiState, ui.GetWindowWidth() * FIELD_MEDIUM, special.definition.customTypes)
             end
             lib.runUiStatePass(passOpts)
         end

@@ -96,8 +96,8 @@ local function AuditSavedProfiles(packId, profiles, discovery, lib)
     -- Build known storage surface from discovery.
     -- Regular modules: namespace = definition.id, fields = storage root aliases.
     -- Special modules: namespace = modName, fields = storage root aliases.
-    local knownModules  = {}  -- [id]      = { [configKey] = true }
-    local knownSpecials = {}  -- [modName] = { [schemaKey] = true }
+    local knownModules  = {}  -- [id]      = { [alias] = true }
+    local knownSpecials = {}  -- [modName] = { [alias] = true }
 
     for _, m in ipairs(discovery.modules) do
         local fields = {}
