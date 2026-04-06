@@ -9,6 +9,7 @@
 function Framework.createTheme()
     local ui                 = rom.ImGui
     local uiCol              = rom.ImGuiCol
+    local unpackColor        = table.unpack or unpack
 
     -- -------------------------------------------------------------------------
     -- COLORS
@@ -99,7 +100,7 @@ function Framework.createTheme()
 
     local function PushTheme()
         for _, entry in ipairs(themeColors) do
-            ui.PushStyleColor(entry[1], table.unpack(entry[2]))
+            ui.PushStyleColor(entry[1], unpackColor(entry[2]))
         end
     end
 

@@ -1,28 +1,7 @@
--- =============================================================================
--- CONFIG HASH: Key-Value Encoding / Decoding
--- =============================================================================
--- Pure hash logic — no engine dependencies. Testable in standalone Lua.
--- Depends on: discovery (module list), lib (readPath/writePath/FieldTypes)
---
--- Two-layer design:
---   canonical  — key-value string encoding all non-default values (for export/import)
---   fingerprint — short base62 checksum of canonical string (for HUD display)
---
--- Format: "ModId=1|ModId.configKey=value|adamant-SpecialName.configKey=value"
--- Keys are sorted alphabetically for stable output.
--- Only non-default values are encoded — adding new fields with defaults is non-breaking.
-
---- Create the hash/profile subsystem for one coordinator pack.
---- @param discovery table Discovery object returned by `Framework.createDiscovery(...)`.
---- @param config table Coordinator config table used for debug-gated warnings.
---- @param lib table Adamant Modpack Lib export.
---- @param packId string Pack identifier used in warnings.
---- @return table hash Hash object exposing encode/decode, export, and import helpers.
 function Framework.createHash(discovery, config, lib, packId)
     local HASH_VERSION = 1
-
     local Hash = {}
-    local GetSchemaConfigFields = lib.getSchemaConfigFields
+    local StorageTypes = lib.StorageTypes
 
     local function ReadPersisted(mod, key)
         return mod.store.read(key)
@@ -32,10 +11,6 @@ function Framework.createHash(discovery, config, lib, packId)
         mod.store.write(key, value)
     end
 
-    local function GetUiState(mod)
-        return mod.store.uiState
-    end
-
     local function ClonePersistedValue(value)
         if type(value) == "table" then
             return rom.game.DeepCopyTable(value)
@@ -43,15 +18,22 @@ function Framework.createHash(discovery, config, lib, packId)
         return value
     end
 
+    local function GetRootStorage(entry)
+        if type(entry.storage) ~= "table" then
+            return {}
+        end
+        return lib.getStorageRoots(entry.storage)
+    end
+
     local function ReloadManagedUiState()
-        for _, m in ipairs(discovery.modulesWithOptions) do
-            local uiState = GetUiState(m.mod)
+        for _, m in ipairs(discovery.modulesWithUi) do
+            local uiState = m.mod.store and m.mod.store.uiState
             if uiState and uiState.reloadFromConfig then
                 uiState.reloadFromConfig()
             end
         end
         for _, special in ipairs(discovery.specials) do
-            local uiState = GetUiState(special.mod)
+            local uiState = special.uiState or (special.mod.store and special.mod.store.uiState)
             if uiState and uiState.reloadFromConfig then
                 uiState.reloadFromConfig()
             end
@@ -61,41 +43,33 @@ function Framework.createHash(discovery, config, lib, packId)
     local function CaptureApplySnapshot()
         local snapshot = {
             moduleEnabled = {},
-            moduleOptions = {},
+            moduleStorage = {},
             specialEnabled = {},
-            specialFields = {},
+            specialStorage = {},
         }
 
         for _, m in ipairs(discovery.modules) do
             snapshot.moduleEnabled[m] = discovery.isModuleEnabled(m)
-        end
-
-        for _, m in ipairs(discovery.modulesWithOptions) do
-            local fields = {}
-            for _, opt in ipairs(m.options) do
-                if opt.type ~= "separator" and opt.configKey ~= nil then
-                    table.insert(fields, {
-                        key = opt.configKey,
-                        value = ClonePersistedValue(discovery.getOptionValue(m, opt.configKey)),
-                    })
-                end
+            local roots = {}
+            for _, root in ipairs(GetRootStorage(m)) do
+                table.insert(roots, {
+                    alias = root.alias,
+                    value = ClonePersistedValue(ReadPersisted(m.mod, root.alias)),
+                })
             end
-            snapshot.moduleOptions[m] = fields
+            snapshot.moduleStorage[m] = roots
         end
 
         for _, special in ipairs(discovery.specials) do
             snapshot.specialEnabled[special] = discovery.isSpecialEnabled(special)
-            local fields = {}
-            local schema = special.stateSchema
-            if schema then
-                for _, field in ipairs(GetSchemaConfigFields(schema)) do
-                    table.insert(fields, {
-                        key = field.configKey,
-                        value = ClonePersistedValue(ReadPersisted(special.mod, field.configKey)),
-                    })
-                end
+            local roots = {}
+            for _, root in ipairs(GetRootStorage(special)) do
+                table.insert(roots, {
+                    alias = root.alias,
+                    value = ClonePersistedValue(ReadPersisted(special.mod, root.alias)),
+                })
             end
-            snapshot.specialFields[special] = fields
+            snapshot.specialStorage[special] = roots
         end
 
         return snapshot
@@ -104,17 +78,17 @@ function Framework.createHash(discovery, config, lib, packId)
     local function RestoreApplySnapshot(snapshot)
         local rollbackErrors = {}
 
-        for _, m in ipairs(discovery.modulesWithOptions) do
-            local fields = snapshot.moduleOptions[m] or {}
-            for _, entry in ipairs(fields) do
-                discovery.setOptionValue(m, entry.key, ClonePersistedValue(entry.value))
+        for _, m in ipairs(discovery.modules) do
+            local roots = snapshot.moduleStorage[m] or {}
+            for _, entry in ipairs(roots) do
+                WritePersisted(m.mod, entry.alias, ClonePersistedValue(entry.value))
             end
         end
 
         for _, special in ipairs(discovery.specials) do
-            local fields = snapshot.specialFields[special] or {}
-            for _, entry in ipairs(fields) do
-                WritePersisted(special.mod, entry.key, ClonePersistedValue(entry.value))
+            local roots = snapshot.specialStorage[special] or {}
+            for _, entry in ipairs(roots) do
+                WritePersisted(special.mod, entry.alias, ClonePersistedValue(entry.value))
             end
         end
 
@@ -122,8 +96,7 @@ function Framework.createHash(discovery, config, lib, packId)
 
         for _, m in ipairs(discovery.modules) do
             local previousEnabled = snapshot.moduleEnabled[m]
-            local currentEnabled = discovery.isModuleEnabled(m)
-            if previousEnabled or currentEnabled ~= previousEnabled then
+            if previousEnabled then
                 local ok, err = discovery.setModuleEnabled(m, previousEnabled)
                 if ok == false then
                     table.insert(rollbackErrors, string.format("%s: %s", tostring(m.modName or m.id), tostring(err)))
@@ -133,12 +106,10 @@ function Framework.createHash(discovery, config, lib, packId)
 
         for _, special in ipairs(discovery.specials) do
             local previousEnabled = snapshot.specialEnabled[special]
-            local currentEnabled = discovery.isSpecialEnabled(special)
-            if previousEnabled or currentEnabled ~= previousEnabled then
+            if previousEnabled then
                 local ok, err = discovery.setSpecialEnabled(special, previousEnabled)
                 if ok == false then
-                    table.insert(rollbackErrors,
-                        string.format("%s: %s", tostring(special.modName), tostring(err)))
+                    table.insert(rollbackErrors, string.format("%s: %s", tostring(special.modName), tostring(err)))
                 end
             end
         end
@@ -164,13 +135,6 @@ function Framework.createHash(discovery, config, lib, packId)
 
     local BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-    -- =============================================================================
-    -- BASE62 (used for fingerprint generation)
-    -- =============================================================================
-
-    --- Encode a non-negative integer as a base62 string.
-    --- @param n number Integer value in the supported hash range.
-    --- @return string encoded
     function Hash.EncodeBase62(n)
         if n == 0 then return "0" end
         local result = ""
@@ -182,9 +146,6 @@ function Framework.createHash(discovery, config, lib, packId)
         return result
     end
 
-    --- Decode a base62 string produced by `Hash.EncodeBase62(...)`.
-    --- @param str string Base62-encoded string.
-    --- @return number|nil decoded Decoded integer, or nil when the string is invalid.
     function Hash.DecodeBase62(str)
         local n = 0
         for i = 1, #str do
@@ -196,11 +157,6 @@ function Framework.createHash(discovery, config, lib, packId)
         return n
     end
 
-    -- =============================================================================
-    -- SERIALIZATION
-    -- =============================================================================
-
-    -- Sort keys for stable output, then join as "key=value|key=value"
     local function Serialize(kv)
         local keys = {}
         for k in pairs(kv) do
@@ -214,7 +170,6 @@ function Framework.createHash(discovery, config, lib, packId)
         return table.concat(parts, "|")
     end
 
-    -- Parse "key=value|key=value" into a table. Returns {} on empty input.
     local function Deserialize(str)
         local kv = {}
         if not str or str == "" then return kv end
@@ -227,13 +182,10 @@ function Framework.createHash(discovery, config, lib, packId)
         return kv
     end
 
-    -- Two independent djb2 passes with different seeds, concatenated.
-    -- Each pass produces up to 6 base62 chars (30-bit range), padded to fixed width.
-    -- Combined: always exactly 12 chars, ~60 bits of collision resistance.
     local function HashChunk(str, seed, multiplier)
         local h = seed
         for i = 1, #str do
-            h = (h * multiplier + string.byte(str, i)) % 1073741824 -- 2^30
+            h = (h * multiplier + string.byte(str, i)) % 1073741824
         end
         return h
     end
@@ -250,50 +202,31 @@ function Framework.createHash(discovery, config, lib, packId)
         return EncodeBase62Fixed(h1, 6) .. EncodeBase62Fixed(h2, 6)
     end
 
-    -- Stable string key for a configKey that may be a string or table path.
-    -- {"Parent", "Child"} -> "Parent.Child",  "SimpleKey" -> "SimpleKey"
-    local function KeyStr(configKey)
-        if type(configKey) == "table" then
-            return table.concat(configKey, ".")
-        end
-        return tostring(configKey)
-    end
-
-    -- Encode/decode delegates to the field type defined in lib.FieldTypes
-    local function EncodeValue(field, value, entryLabel)
-        local fieldType = lib.FieldTypes[field.type]
-        if not fieldType then
+    local function EncodeValue(root, value, entryLabel)
+        local storageType = StorageTypes[root.type]
+        if not storageType then
             lib.contractWarn(packId,
-                "GetConfigHash: skipping %s '%s' with unknown field type '%s'",
-                entryLabel, tostring(field._schemaKey or KeyStr(field.configKey)), tostring(field.type))
+                "GetConfigHash: skipping %s '%s' with unknown storage type '%s'",
+                entryLabel, tostring(root.alias), tostring(root.type))
             return nil
         end
-        return fieldType.toHash(field, value)
+        return storageType.toHash(root, value)
     end
 
-    local function DecodeValue(field, str, entryLabel)
-        local fieldType = lib.FieldTypes[field.type]
-        if not fieldType then
+    local function DecodeValue(root, str, entryLabel)
+        local storageType = StorageTypes[root.type]
+        if not storageType then
             lib.contractWarn(packId,
-                "ApplyConfigHash: defaulting %s '%s' with unknown field type '%s'",
-                entryLabel, tostring(field._schemaKey or KeyStr(field.configKey)), tostring(field.type))
-            return field.default
+                "ApplyConfigHash: defaulting %s '%s' with unknown storage type '%s'",
+                entryLabel, tostring(root.alias), tostring(root.type))
+            return root.default
         end
-        return fieldType.fromHash(field, str)
+        return storageType.fromHash(root, str)
     end
 
-    -- =============================================================================
-    -- CONFIG HASH
-    -- =============================================================================
-
-    --- Compute the canonical config hash and short fingerprint for the current pack state.
-    --- @param source table|nil Optional staging snapshot with `modules[id]` and `specials[modName]` enabled states.
-    --- @return string canonical Stable canonical hash payload for export/profile save.
-    --- @return string fingerprint Short base62 fingerprint for HUD display.
     function Hash.GetConfigHash(source)
         local kv = {}
 
-        -- Boolean module enabled states (omit if matches module default)
         for _, m in ipairs(discovery.modules) do
             local enabled
             if source then
@@ -302,30 +235,23 @@ function Framework.createHash(discovery, config, lib, packId)
                 enabled = discovery.isModuleEnabled(m)
             end
             if enabled == nil then enabled = false end
-            local default = m.default == true -- treat nil default as false
+            local default = m.default == true
             if enabled ~= default then
                 kv[m.id] = enabled and "1" or "0"
             end
-        end
 
-        -- Inline option values (omit if matches field default)
-        for _, m in ipairs(discovery.modulesWithOptions) do
-            for _, opt in ipairs(m.options) do
-                if opt.type ~= "separator" and opt.configKey ~= nil then
-                    local current = discovery.getOptionValue(m, opt.configKey)
-                    if not lib.valuesEqual(opt, current, opt.default) then
-                        local encoded = EncodeValue(opt, current, "option")
-                        if encoded ~= nil then
-                            kv[opt._hashKey or (m.id .. "." .. opt.configKey)] = encoded
-                        end
+            for _, root in ipairs(GetRootStorage(m)) do
+                local current = ReadPersisted(m.mod, root.alias)
+                if not lib.valuesEqual(root, current, root.default) then
+                    local encoded = EncodeValue(root, current, "storage root")
+                    if encoded ~= nil then
+                        kv[m.id .. "." .. root.alias] = encoded
                     end
                 end
             end
         end
 
-        -- Special module enabled states and state schema values
         for _, special in ipairs(discovery.specials) do
-            -- Enabled state (default is false; only encode if true)
             local enabled
             if source then
                 enabled = source.specials and source.specials[special.modName]
@@ -337,30 +263,22 @@ function Framework.createHash(discovery, config, lib, packId)
                 kv[special.modName] = "1"
             end
 
-            -- State schema values (omit if matches field default)
-            local schema = special.stateSchema
-            if schema then
-                for _, field in ipairs(GetSchemaConfigFields(schema)) do
-                    local current = ReadPersisted(special.mod, field.configKey)
-                    if not lib.valuesEqual(field, current, field.default) then
-                        local encoded = EncodeValue(field, current, "schema field")
-                        if encoded ~= nil then
-                            kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))] = encoded
-                        end
+            for _, root in ipairs(GetRootStorage(special)) do
+                local current = ReadPersisted(special.mod, root.alias)
+                if not lib.valuesEqual(root, current, root.default) then
+                    local encoded = EncodeValue(root, current, "storage root")
+                    if encoded ~= nil then
+                        kv[special.modName .. "." .. root.alias] = encoded
                     end
                 end
             end
         end
 
         local payload = Serialize(kv)
-        local canonical = "_v=" .. HASH_VERSION
-            .. (payload ~= "" and "|" .. payload or "")
+        local canonical = "_v=" .. HASH_VERSION .. (payload ~= "" and "|" .. payload or "")
         return canonical, Fingerprint(canonical)
     end
 
-    --- Apply a canonical config hash to the pack, with rollback on later failure.
-    --- @param hash string Canonical hash payload to decode and apply.
-    --- @return boolean success True when the full import completed successfully.
     function Hash.ApplyConfigHash(hash)
         if hash == nil or hash == "" then
             lib.warn(packId, config.DebugMode, "ApplyConfigHash: empty hash")
@@ -368,17 +286,16 @@ function Framework.createHash(discovery, config, lib, packId)
         end
 
         local kv = Deserialize(hash)
-
         if kv["_v"] == nil then
             lib.warn(packId, config.DebugMode,
-                "ApplyConfigHash: unrecognized format (missing version key) — hash may be from an older format")
+                "ApplyConfigHash: unrecognized format (missing version key)")
             return false
         end
 
         local version = tonumber(kv["_v"]) or 1
         if version > HASH_VERSION then
             lib.contractWarn(packId,
-                "ApplyConfigHash: hash version %d is newer than supported (%d) — some settings may not apply",
+                "ApplyConfigHash: hash version %d is newer than supported (%d)",
                 version, HASH_VERSION)
         end
 
@@ -386,9 +303,6 @@ function Framework.createHash(discovery, config, lib, packId)
         local moduleTargets = {}
         local specialTargets = {}
 
-        -- Capture enabled-state targets first, then write all option/schema values
-        -- before any apply() calls run. This ensures data-mutation modules see the
-        -- final decoded config when profile/hash application enables them.
         for _, m in ipairs(discovery.modules) do
             local stored = kv[m.id]
             if stored ~= nil then
@@ -399,34 +313,27 @@ function Framework.createHash(discovery, config, lib, packId)
         end
 
         local okWrite, writeErr = xpcall(function()
-            -- Inline option values
-            for _, m in ipairs(discovery.modulesWithOptions) do
-                for _, opt in ipairs(m.options) do
-                    if opt.type ~= "separator" and opt.configKey ~= nil then
-                        local stored = kv[opt._hashKey or (m.id .. "." .. opt.configKey)]
-                        if stored ~= nil then
-                            discovery.setOptionValue(m, opt.configKey, DecodeValue(opt, stored, "option"))
-                        else
-                            discovery.setOptionValue(m, opt.configKey, opt.default)
-                        end
+            for _, m in ipairs(discovery.modules) do
+                for _, root in ipairs(GetRootStorage(m)) do
+                    local stored = kv[m.id .. "." .. root.alias]
+                    if stored ~= nil then
+                        WritePersisted(m.mod, root.alias, DecodeValue(root, stored, "storage root"))
+                    else
+                        WritePersisted(m.mod, root.alias, root.default)
                     end
                 end
             end
 
-            -- Special module enabled states and state schema values
             for _, special in ipairs(discovery.specials) do
                 local storedEnabled = kv[special.modName]
                 specialTargets[special] = storedEnabled == "1"
 
-                local schema = special.stateSchema
-                if schema then
-                    for _, field in ipairs(GetSchemaConfigFields(schema)) do
-                        local storedField = kv[special.modName .. "." .. (field._schemaKey or KeyStr(field.configKey))]
-                        if storedField ~= nil then
-                            WritePersisted(special.mod, field.configKey, DecodeValue(field, storedField, "schema field"))
-                        else
-                            WritePersisted(special.mod, field.configKey, field.default)
-                        end
+                for _, root in ipairs(GetRootStorage(special)) do
+                    local stored = kv[special.modName .. "." .. root.alias]
+                    if stored ~= nil then
+                        WritePersisted(special.mod, root.alias, DecodeValue(root, stored, "storage root"))
+                    else
+                        WritePersisted(special.mod, root.alias, root.default)
                     end
                 end
             end
@@ -437,7 +344,6 @@ function Framework.createHash(discovery, config, lib, packId)
 
         ReloadManagedUiState()
 
-        -- Apply enabled states after all decoded values are in place.
         for _, m in ipairs(discovery.modules) do
             local ok, err = discovery.setModuleEnabled(m, moduleTargets[m])
             if ok == false then

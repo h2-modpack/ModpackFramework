@@ -2,11 +2,9 @@
 -- Test utilities: mock engine globals and load Framework for testing
 -- =============================================================================
 
--- Mock public/ENVY
 public = {}
 _PLUGIN = { guid = "test-framework" }
 
--- Deep copy
 local function deepCopy(orig)
     if type(orig) ~= "table" then return orig end
     local copy = {}
@@ -16,7 +14,6 @@ local function deepCopy(orig)
     return copy
 end
 
--- Mock rom
 rom = {
     mods = {},
     game = {
@@ -24,6 +21,28 @@ rom = {
         SetupRunData = function() end,
     },
     ImGui = {},
+    ImGuiCol = {
+        Text = 1,
+        TextDisabled = 2,
+        WindowBg = 3,
+        ChildBg = 4,
+        Header = 5,
+        HeaderHovered = 6,
+        HeaderActive = 7,
+        Button = 8,
+        ButtonHovered = 9,
+        ButtonActive = 10,
+        FrameBg = 11,
+        FrameBgHovered = 12,
+        FrameBgActive = 13,
+        CheckMark = 14,
+        Tab = 15,
+        TabHovered = 16,
+        TabActive = 17,
+        Separator = 18,
+        Border = 19,
+        TitleBgActive = 20,
+    },
     gui = {
         add_to_menu_bar = function() end,
         add_imgui = function() end,
@@ -34,7 +53,6 @@ rom.mods['SGG_Modding-ENVY'] = {
     auto = function() return {} end,
 }
 
--- Minimal Chalk mock: auto() returns a plain table (the "config")
 rom.mods['SGG_Modding-Chalk'] = {
     auto = function() return { DebugMode = false } end,
 }
@@ -43,11 +61,11 @@ import = function(path)
     dofile("../adamant-ModpackLib/src/" .. path)
 end
 
--- Warning capture
 Warnings = {}
 
 function CaptureWarnings()
     Warnings = {}
+    lib.config.DebugMode = true
     _originalPrint = print
     print = function(msg)
         table.insert(Warnings, msg)
@@ -55,20 +73,15 @@ function CaptureWarnings()
 end
 
 function RestoreWarnings()
+    lib.config.DebugMode = false
     print = _originalPrint or print
     Warnings = {}
 end
 
--- Load Lib first (Framework depends on it)
 dofile("../adamant-ModpackLib/src/main.lua")
 lib = public
-
--- Set up lib as a rom mod so Framework can find it
 rom.mods['adamant-ModpackLib'] = lib
 
--- Load Framework factory functions directly.
--- Framework.init is NOT called — only individual factory functions are used in tests.
--- We stub import/import_as_fallback so the sub-files load cleanly without the engine.
 import = function() end
 import_as_fallback = function() end
 
@@ -78,112 +91,148 @@ dofile("src/discovery.lua")
 dofile("src/hash.lua")
 dofile("src/ui.lua")
 
--- Test-level config: gates lib.warn in hash/discovery during tests
 config = { ModEnabled = true, DebugMode = false }
-
--- =============================================================================
--- Mock Discovery: simulates discovered modules for hash testing
--- =============================================================================
 
 MockDiscovery = {}
 
-function MockDiscovery.create(moduleConfigs, optionConfigs, specialConfigs)
-    -- moduleConfigs: ordered list of { id, category, enabled, default, options? }
-    -- optionConfigs: { [id] = { [configKey] = value } }  (unused; options are on moduleConfigs)
-    -- specialConfigs: { { modName, config, stateSchema } }
+local function makePersistedConfig(storage, overrides)
+    local persisted = {
+        Enabled = false,
+        DebugMode = false,
+    }
+    for _, root in ipairs(storage or {}) do
+        persisted[root.configKey] = overrides and overrides[root.alias] or root.default
+    end
+    if overrides then
+        for key, value in pairs(overrides) do
+            if persisted[key] == nil then
+                persisted[key] = value
+            end
+        end
+    end
+    return persisted
+end
 
-    moduleConfigs = moduleConfigs or {}
-    optionConfigs = optionConfigs or {}
-    specialConfigs = specialConfigs or {}
+function MockDiscovery.create(moduleDefs, specialDefs)
+    moduleDefs = moduleDefs or {}
+    specialDefs = specialDefs or {}
 
     local discovery = {
         modules = {},
         modulesById = {},
-        modulesWithOptions = {},
+        modulesWithUi = {},
+        modulesWithQuickUi = {},
         specials = {},
         categories = {},
         byCategory = {},
+        categoryLayouts = {},
+        unifiedTabOrder = {},
     }
 
-    local categorySet = {}
+    local seenCategories = {}
 
-    for _, mc in ipairs(moduleConfigs) do
-        local persisted = { Enabled = mc.enabled }
-        if mc.options then
-            for _, opt in ipairs(mc.options) do
-                if opt.configKey ~= nil and persisted[opt.configKey] == nil then
-                    persisted[opt.configKey] = opt.default
-                end
-            end
-        end
-        local mod = {
-            modName = "adamant-" .. mc.id,
-            mod = {
-                config = persisted,
-                store = lib.createStore(persisted, {
-                    id = mc.id,
-                    options = mc.options,
-                }),
-            },
-            definition = {
-                apply = function() end,
-                revert = function() end,
-            },
-            id = mc.id,
-            name = mc.id,
-            category = mc.category or "General",
-            options = mc.options,
-            default = mc.default ~= nil and mc.default or false,
+    local function addModule(def)
+        local persisted = makePersistedConfig(def.storage, def.values)
+        persisted.Enabled = def.enabled == true
+        persisted.DebugMode = def.debug == true
+
+        local definition = {
+            id = def.id,
+            name = def.name or def.id,
+            category = def.category or "General",
+            default = def.default == true,
+            storage = def.storage or {},
+            ui = def.ui or {},
+            affectsRunData = def.affectsRunData == true,
+            apply = def.apply,
+            revert = def.revert,
+            patchPlan = def.patchPlan,
+        }
+        local store = lib.createStore(persisted, definition)
+        local module = {
+            modName = def.modName or ("adamant-" .. def.id),
+            mod = { store = store },
+            definition = definition,
+            id = definition.id,
+            name = definition.name,
+            category = definition.category,
+            group = def.group or "General",
+            default = definition.default,
+            storage = definition.storage,
+            ui = definition.ui,
         }
 
-        table.insert(discovery.modules, mod)
-        discovery.modulesById[mc.id] = mod
+        table.insert(discovery.modules, module)
+        discovery.modulesById[module.id] = module
 
-        if mc.options and #mc.options > 0 then
-            table.insert(discovery.modulesWithOptions, mod)
+        if type(module.ui) == "table" and #module.ui > 0 then
+            table.insert(discovery.modulesWithUi, module)
+            local quickUi = lib.collectQuickUiNodes(module.ui)
+            if #quickUi > 0 then
+                module.quickUi = quickUi
+                table.insert(discovery.modulesWithQuickUi, module)
+            end
         end
 
-        local cat = mc.category or "General"
-        if not categorySet[cat] then
-            categorySet[cat] = true
-            table.insert(discovery.categories, { key = cat, label = cat })
+        local category = module.category
+        if not seenCategories[category] then
+            seenCategories[category] = true
+            table.insert(discovery.categories, { key = category, label = category })
         end
-        discovery.byCategory[cat] = discovery.byCategory[cat] or {}
-        table.insert(discovery.byCategory[cat], mod)
+        discovery.byCategory[category] = discovery.byCategory[category] or {}
+        table.insert(discovery.byCategory[category], module)
     end
 
-    for _, sc in ipairs(specialConfigs) do
-        local store = lib.createStore(sc.config, {
+    local function addSpecial(def)
+        local persisted = makePersistedConfig(def.storage, def.values)
+        persisted.Enabled = def.enabled == true
+        persisted.DebugMode = def.debug == true
+
+        local definition = {
             special = true,
-            stateSchema = sc.stateSchema,
-        })
-        table.insert(discovery.specials, {
-            modName = sc.modName,
-            mod = {
-                config = sc.config,
-                store = store,
-            },
-            definition = {},
-            stateSchema = sc.stateSchema,
+            name = def.name or def.modName,
+            tabLabel = def.tabLabel or def.name or def.modName,
+            storage = def.storage or {},
+            ui = def.ui or {},
+            affectsRunData = def.affectsRunData == true,
+            apply = def.apply,
+            revert = def.revert,
+            patchPlan = def.patchPlan,
+        }
+        local store = lib.createStore(persisted, definition)
+        local special = {
+            modName = def.modName,
+            mod = { store = store, DrawTab = def.DrawTab, DrawQuickContent = def.DrawQuickContent },
+            definition = definition,
+            storage = definition.storage,
+            ui = definition.ui,
             uiState = store.uiState,
-        })
+            _tabLabel = definition.tabLabel,
+        }
+        table.insert(discovery.specials, special)
     end
 
-    -- State accessors
-    function discovery.isModuleEnabled(m)
-        return m.mod.store.read("Enabled") == true
+    for _, def in ipairs(moduleDefs) do
+        addModule(def)
+    end
+    for _, def in ipairs(specialDefs) do
+        addSpecial(def)
     end
 
-    function discovery.setModuleEnabled(m, enabled)
-        m.mod.store.write("Enabled", enabled)
+    function discovery.isModuleEnabled(module)
+        return module.mod.store.read("Enabled") == true
     end
 
-    function discovery.getOptionValue(m, configKey)
-        return m.mod.store.read(configKey)
+    function discovery.setModuleEnabled(module, enabled)
+        return lib.setDefinitionEnabled(module.definition, module.mod.store, enabled)
     end
 
-    function discovery.setOptionValue(m, configKey, value)
-        m.mod.store.write(configKey, value)
+    function discovery.getStorageValue(module, aliasOrKey)
+        return module.mod.store.read(aliasOrKey)
+    end
+
+    function discovery.setStorageValue(module, aliasOrKey, value)
+        module.mod.store.write(aliasOrKey, value)
     end
 
     function discovery.isSpecialEnabled(special)
@@ -191,7 +240,15 @@ function MockDiscovery.create(moduleConfigs, optionConfigs, specialConfigs)
     end
 
     function discovery.setSpecialEnabled(special, enabled)
-        special.mod.store.write("Enabled", enabled)
+        return lib.setDefinitionEnabled(special.definition, special.mod.store, enabled)
+    end
+
+    function discovery.isDebugEnabled(entry)
+        return entry.mod.store.read("DebugMode") == true
+    end
+
+    function discovery.setDebugEnabled(entry, value)
+        entry.mod.store.write("DebugMode", value)
     end
 
     return discovery

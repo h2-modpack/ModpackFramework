@@ -70,14 +70,6 @@ local function ValidateInitParams(params, lib)
         profile.Tooltip = profile.Tooltip or ""
     end
 
-    local sidebarOrder = params.def.sidebarOrder
-    if sidebarOrder ~= nil and sidebarOrder ~= "special-first" and sidebarOrder ~= "category-first" then
-        lib.contractWarn(params.packId,
-            "Framework.init: unknown sidebarOrder '%s'; defaulting to 'special-first'",
-            tostring(sidebarOrder))
-        params.def.sidebarOrder = "special-first"
-    end
-
     local groupStyleDefault = params.def.groupStyleDefault
     if groupStyleDefault ~= nil and groupStyleDefault ~= "collapsing" and groupStyleDefault ~= "separator" and
         groupStyleDefault ~= "flat" then
@@ -101,18 +93,18 @@ end
 --- @param discovery table Populated discovery object after `discovery.run(...)`.
 --- @param lib table Adamant Modpack Lib export.
 local function AuditSavedProfiles(packId, profiles, discovery, lib)
-    -- Build known field surface from discovery.
-    -- Regular modules: namespace = definition.id, fields = flat option configKeys.
-    -- Special modules: namespace = modName, fields = stateSchema _schemaKeys.
+    -- Build known storage surface from discovery.
+    -- Regular modules: namespace = definition.id, fields = storage root aliases.
+    -- Special modules: namespace = modName, fields = storage root aliases.
     local knownModules  = {}  -- [id]      = { [configKey] = true }
     local knownSpecials = {}  -- [modName] = { [schemaKey] = true }
 
     for _, m in ipairs(discovery.modules) do
         local fields = {}
-        if m.options then
-            for _, opt in ipairs(m.options) do
-                if opt.type ~= "separator" and opt.configKey ~= nil then
-                    fields[tostring(opt.configKey)] = true
+        if m.storage then
+            for _, root in ipairs(m.storage) do
+                if root._isRoot and root.alias ~= nil then
+                    fields[tostring(root.alias)] = true
                 end
             end
         end
@@ -121,13 +113,10 @@ local function AuditSavedProfiles(packId, profiles, discovery, lib)
 
     for _, special in ipairs(discovery.specials) do
         local fields = {}
-        if special.stateSchema then
-            for _, field in ipairs(special.stateSchema) do
-                if field.type ~= "separator" and field.configKey ~= nil then
-                    local key = field._schemaKey
-                        or (type(field.configKey) == "table" and table.concat(field.configKey, "."))
-                        or tostring(field.configKey)
-                    fields[key] = true
+        if special.storage then
+            for _, root in ipairs(special.storage) do
+                if root._isRoot and root.alias ~= nil then
+                    fields[tostring(root.alias)] = true
                 end
             end
         end
@@ -242,10 +231,6 @@ public.GroupStyle = {
     FLAT       = "flat",       -- no header, items rendered directly
 }
 
-public.SidebarOrder = {
-    SPECIAL_FIRST  = "special-first",
-    CATEGORY_FIRST = "category-first",
-}
 
 --- Return a stable imgui render callback for the given pack.
 --- Call once at startup; the callback late-binds to the current pack instance.

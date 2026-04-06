@@ -4,14 +4,12 @@ TestMain = {}
 
 function TestMain:testGetRendererIsSafeBeforeInit()
     local render = public.getRenderer("missing-pack")
-    local ok = pcall(render)
-    lu.assertTrue(ok)
+    lu.assertTrue(pcall(render))
 end
 
 function TestMain:testGetMenuBarIsSafeBeforeInit()
     local addMenuBar = public.getMenuBar("missing-pack")
-    local ok = pcall(addMenuBar)
-    lu.assertTrue(ok)
+    lu.assertTrue(pcall(addMenuBar))
 end
 
 function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
@@ -75,52 +73,37 @@ function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
     local firstState = { applied = 0, reverted = 0 }
     local secondState = { applied = 0, reverted = 0 }
 
-    local firstStore = lib.createStore({ Enabled = true })
-    local secondStore = lib.createStore({ Enabled = true })
-
-    local discovery = {
-        modules = {
-            {
-                id = "Alpha",
-                name = "Alpha",
-                modName = "AlphaMod",
-                category = "General",
-                mod = { store = firstStore },
-                definition = {
-                    apply = function() firstState.applied = firstState.applied + 1 end,
-                    revert = function() firstState.reverted = firstState.reverted + 1 end,
-                },
-            },
-            {
-                id = "Bravo",
-                name = "Bravo",
-                modName = "BravoMod",
-                category = "General",
-                mod = { store = secondStore },
-                definition = {
-                    apply = function()
-                        secondState.applied = secondState.applied + 1
-                        error("apply boom")
-                    end,
-                    revert = function() secondState.reverted = secondState.reverted + 1 end,
-                },
-            },
+    local discovery = MockDiscovery.create({
+        {
+            modName = "Alpha",
+            id = "Alpha",
+            name = "Alpha",
+            category = "General",
+            enabled = true,
+            storage = {},
+            apply = function()
+                firstState.applied = firstState.applied + 1
+            end,
+            revert = function()
+                firstState.reverted = firstState.reverted + 1
+            end,
         },
-        modulesWithOptions = {},
-        specials = {},
-        categories = {},
-        byCategory = {},
-        categoryLayouts = {},
-        isModuleEnabled = function(m)
-            return m.mod.store.read("Enabled") == true
-        end,
-        isSpecialEnabled = function(special)
-            return special.mod.store.read("Enabled") == true
-        end,
-        isDebugEnabled = function()
-            return false
-        end,
-    }
+        {
+            modName = "Bravo",
+            id = "Bravo",
+            name = "Bravo",
+            category = "General",
+            enabled = true,
+            storage = {},
+            apply = function()
+                secondState.applied = secondState.applied + 1
+                error("apply boom")
+            end,
+            revert = function()
+                secondState.reverted = secondState.reverted + 1
+            end,
+        },
+    })
 
     local hudMarkers = {}
     local hud = {
@@ -136,24 +119,7 @@ function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
         end,
     }
 
-    local theme = {
-        colors = {
-            warning = { 1, 1, 1, 1 },
-            info = { 1, 1, 1, 1 },
-            success = { 1, 1, 1, 1 },
-            error = { 1, 1, 1, 1 },
-            mixed = { 1, 1, 1, 1 },
-            textDisabled = { 1, 1, 1, 1 },
-        },
-        ImGuiTreeNodeFlags = { DefaultOpen = 0 },
-        SIDEBAR_RATIO = 0.2,
-        FIELD_MEDIUM = 0.5,
-        FIELD_NARROW = 0.3,
-        FIELD_WIDE = 0.85,
-        PushTheme = noop,
-        PopTheme = noop,
-    }
-
+    local theme = Framework.createTheme()
     local def = {
         NUM_PROFILES = 1,
         defaultProfiles = {
@@ -173,9 +139,11 @@ function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
 
     local okFirst, errFirst = pcall(builtUi.renderWindow)
     local okSecond, errSecond = pcall(builtUi.renderWindow)
+    local warnings = Warnings
 
     rom.ImGui = previousImGui
     SetupRunData = previousSetupRunData
+    RestoreWarnings()
 
     lu.assertTrue(okFirst, tostring(errFirst))
     lu.assertTrue(okSecond, tostring(errSecond))
@@ -187,9 +155,7 @@ function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
     lu.assertEquals(firstState.reverted, 1)
     lu.assertEquals(secondState.applied, 1)
     lu.assertEquals(secondState.reverted, 0)
-    lu.assertEquals(#Warnings, 2)
-    lu.assertStrContains(Warnings[1], "[test-pack] BravoMod apply failed: ")
-    lu.assertStrContains(Warnings[2], "[test-pack] Enable Mod toggle failed; restoring previous runtime state")
-
-    RestoreWarnings()
+    lu.assertEquals(#warnings, 2)
+    lu.assertStrContains(warnings[1], "[test-pack] Bravo apply failed: ")
+    lu.assertStrContains(warnings[2], "[test-pack] Enable Mod toggle failed; restoring previous runtime state")
 end

@@ -2,20 +2,21 @@ local lu = require('luaunit')
 
 TestLibUiStatePass = {}
 
-function TestLibUiStatePass:testFlushesManagedStateAndCallsCallback()
-    local modConfig = {
-        Flag = false,
-    }
+function TestLibUiStatePass:testFlushesManagedAliasStateAndCallsCallback()
+    local config = { Flag = false }
     local definition = {
-        stateSchema = {
-            { type = "checkbox", configKey = "Flag", default = false },
+        storage = {
+            { type = "bool", alias = "Flag", configKey = "Flag", default = false },
+        },
+        ui = {
+            { type = "checkbox", binds = { value = "Flag" }, label = "Flag" },
         },
     }
-    local uiState = lib.createStore(modConfig, definition).uiState
+    local uiState = lib.createStore(config, definition).uiState
 
     local flushed = false
     local didFlush = lib.runUiStatePass({
-        name = "MyState",
+        name = "ManagedState",
         uiState = uiState,
         draw = function(_, state)
             state.set("Flag", true)
@@ -27,36 +28,31 @@ function TestLibUiStatePass:testFlushesManagedStateAndCallsCallback()
 
     lu.assertTrue(didFlush)
     lu.assertTrue(flushed)
-    lu.assertTrue(modConfig.Flag)
+    lu.assertTrue(config.Flag)
 end
 
 function TestLibUiStatePass:testMissingUiStateSkipsSafely()
     local didFlush = lib.runUiStatePass({
-        name = "MyState",
+        name = "MissingState",
         draw = function()
-            error("draw should not run when uiState is malformed")
+            error("draw should not run")
         end,
     })
 
     lu.assertFalse(didFlush)
 end
 
-TestLibSchemaValidation = {}
+TestLibValidation = {}
 
-function TestLibSchemaValidation:testDuplicateConfigKeysWarn()
-    local previousDebugMode = lib.config.DebugMode
-    lib.config.DebugMode = true
+function TestLibValidation:testDuplicateStorageAliasesWarn()
     CaptureWarnings()
-
-    lib.validateSchema({
-        { type = "checkbox", configKey = "Flag", default = false },
-        { type = "checkbox", configKey = "Flag", default = false },
-    }, "DuplicateSchema")
-
+    lib.validateStorage({
+        { type = "bool", alias = "Flag", configKey = "FlagA", default = false },
+        { type = "bool", alias = "Flag", configKey = "FlagB", default = false },
+    }, "DuplicateStorage")
     local warnings = Warnings
     RestoreWarnings()
-    lib.config.DebugMode = previousDebugMode
 
     lu.assertEquals(#warnings, 1)
-    lu.assertStrContains(warnings[1], "duplicate configKey 'Flag'")
+    lu.assertStrContains(warnings[1], "duplicate alias 'Flag'")
 end

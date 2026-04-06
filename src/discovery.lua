@@ -47,12 +47,14 @@ function Framework.createDiscovery(packId, config, lib)
     -- Populated by Discovery.run()
     Discovery.modules = {}            -- ordered list of discovered boolean modules
     Discovery.modulesById = {}        -- id -> module entry
-    Discovery.modulesWithOptions = {} -- ordered list of modules that have definition.options
+    Discovery.modulesWithUi = {}           -- ordered list of modules that have definition.ui
+    Discovery.modulesWithQuickUi = {}      -- ordered list of modules that have at least one quick = true node
     Discovery.specials = {}           -- ordered list of discovered special modules
 
     Discovery.categories = {}         -- ordered list of { key, label }
     Discovery.byCategory = {}         -- category key -> ordered list of modules
     Discovery.categoryLayouts = {}    -- category key -> UI layout (groups)
+    Discovery.unifiedTabOrder = {}    -- ordered list of { kind="category"|"special", entry } for sidebar + quick setup
 
     -- -------------------------------------------------------------------------
     -- DISCOVERY
@@ -139,9 +141,9 @@ function Framework.createDiscovery(packId, config, lib)
                 elseif not def.name or (lifecycleRequired and not hasLifecycle) then
                     lib.contractWarn(packId,
                         "Skipping special %s: missing name or lifecycle (patchPlan/apply/revert)", modName)
-                elseif type(def.stateSchema) ~= "table" then
+                elseif type(def.storage) ~= "table" then
                     lib.contractWarn(packId,
-                        "Skipping special %s: missing definition.stateSchema", modName)
+                        "Skipping special %s: missing definition.storage", modName)
                 else
                     local store = GetStore(mod)
                     if not store or type(store.read) ~= "function" or type(store.write) ~= "function" then
@@ -151,19 +153,17 @@ function Framework.createDiscovery(packId, config, lib)
                         lib.contractWarn(packId,
                             "%s: special module is missing public.store.uiState (managed UI state)", modName)
                     else
-                        if def.stateSchema then
-                            lib.validateSchema(def.stateSchema, modName)
-                        end
                         if not mod.DrawTab and not mod.DrawQuickContent then
                             lib.warn(packId, config.DebugMode,
-                                "%s: special module exposes neither DrawTab nor DrawQuickContent; tab will be empty",
+                                "%s: special module exposes neither DrawTab nor DrawQuickContent; falling back to definition.ui if present",
                                 modName)
                         end
                         table.insert(Discovery.specials, {
                             modName      = modName,
                             mod          = mod,
                             definition   = def,
-                            stateSchema  = def.stateSchema,
+                            storage      = def.storage,
+                            ui           = def.ui,
                             uiState      = GetUiState(mod),
                             _enableLabel = "Enable " .. tostring(def.name),
                             _debugLabel  = tostring(def.name) .. "##" .. modName,
@@ -177,6 +177,8 @@ function Framework.createDiscovery(packId, config, lib)
                     -- Already warned once for the full collision set above.
                 elseif not def.id or (lifecycleRequired and not hasLifecycle) then
                     lib.contractWarn(packId, "Skipping %s: missing id or lifecycle (patchPlan/apply/revert)", modName)
+                elseif type(def.storage) ~= "table" then
+                    lib.contractWarn(packId, "Skipping %s: missing definition.storage", modName)
                 elseif not GetStore(mod) or type(GetStore(mod).read) ~= "function" or type(GetStore(mod).write) ~= "function" then
                     lib.contractWarn(packId, "%s: module is missing public.store", modName)
                 else
@@ -191,36 +193,24 @@ function Framework.createDiscovery(packId, config, lib)
                         group       = def.group or "General",
                         tooltip     = def.tooltip or "",
                         default     = def.default,
-                        options     = def.options,
+                        storage     = def.storage,
+                        ui          = def.ui,
                         _debugLabel = (def.name or def.id) .. "##" .. def.id,
                     }
 
                     table.insert(Discovery.modules, module)
                     Discovery.modulesById[def.id] = module
-                    if def.options and #def.options > 0 then
-                        lib.validateSchema(def.options, modName)
-                        local validOptions = {}
-                        for index, opt in ipairs(def.options) do
-                            opt._pushId = def.id .. "_" .. tostring(opt.configKey or opt.label or opt.type or index)
-                            if opt.type == "separator" then
-                                table.insert(validOptions, opt)
-                            elseif type(opt.configKey) == "table" then
-                                lib.contractWarn(packId,
-                                    "%s: option configKey is a table -- table-path keys are only valid in stateSchema" ..
-                                    " (special modules). Use a flat string key in def.options. Option skipped.", modName)
-                            else
-                                opt._hashKey = def.id .. "." .. opt.configKey
-                                table.insert(validOptions, opt)
-                            end
-                        end
-                        module.options = validOptions
-                        if #validOptions > 0 then
-                            if not GetUiState(mod) then
-                                lib.contractWarn(packId,
-                                    "%s: module options are missing public.store.uiState (managed UI state)",
-                                    modName)
-                            else
-                                table.insert(Discovery.modulesWithOptions, module)
+                    if type(def.ui) == "table" and #def.ui > 0 then
+                        if not GetUiState(mod) then
+                            lib.contractWarn(packId,
+                                "%s: module UI is missing public.store.uiState (managed UI state)",
+                                modName)
+                        else
+                            table.insert(Discovery.modulesWithUi, module)
+                            local quickUi = lib.collectQuickUiNodes(def.ui)
+                            if #quickUi > 0 then
+                                module.quickUi = quickUi
+                                table.insert(Discovery.modulesWithQuickUi, module)
                             end
                         end
                     end
@@ -257,38 +247,75 @@ function Framework.createDiscovery(packId, config, lib)
             end
         end
 
-        -- Sort categories alphabetically by default; coordinators can optionally
-        -- force specific categories to the front via def.categoryOrder.
-        local categoryRank = {}
+        -- Build a lookup from special tabLabel/name -> special entry for unified ordering.
+        local specialByLabel = {}
+        for _, special in ipairs(Discovery.specials) do
+            specialByLabel[special._tabLabel] = special
+            if special.definition.name and not specialByLabel[special.definition.name] then
+                specialByLabel[special.definition.name] = special
+            end
+        end
+
+        -- Build unifiedTabOrder: walk categoryOrder in declaration order, resolving each
+        -- name as either a category or a special. Anything not mentioned is appended
+        -- alphabetically (categories first, then specials, matching legacy behaviour).
+        local placedCategories = {}
+        local placedSpecials   = {}
+
         if type(categoryOrder) == "table" then
-            local warnedUnknownCategories = {}
-            for index, category in ipairs(categoryOrder) do
-                if type(category) == "string" then
-                    categoryRank[category] = index
-                    if not categorySet[category] and not warnedUnknownCategories[category] then
-                        warnedUnknownCategories[category] = true
-                        lib.warn(packId, config.DebugMode,
-                            "categoryOrder contains unknown category '%s'; entry ignored",
-                            category)
+            for _, name in ipairs(categoryOrder) do
+                if type(name) ~= "string" then
+                    -- skip non-string entries
+                elseif categorySet[name] then
+                    if not placedCategories[name] then
+                        placedCategories[name] = true
+                        table.insert(Discovery.unifiedTabOrder, {
+                            kind  = "category",
+                            entry = { key = name, label = name },
+                        })
                     end
+                elseif specialByLabel[name] then
+                    local special = specialByLabel[name]
+                    if not placedSpecials[special.modName] then
+                        placedSpecials[special.modName] = true
+                        table.insert(Discovery.unifiedTabOrder, {
+                            kind  = "special",
+                            entry = special,
+                        })
+                    end
+                else
+                    lib.warn(packId, config.DebugMode,
+                        "categoryOrder contains unknown category or special '%s'; entry ignored", name)
                 end
             end
         end
 
-        table.sort(Discovery.categories, function(a, b)
-            local aRank = categoryRank[a.key]
-            local bRank = categoryRank[b.key]
-            if aRank and bRank then
-                return aRank < bRank
+        -- Append unplaced categories alphabetically.
+        local unplacedCats = {}
+        for _, cat in ipairs(Discovery.categories) do
+            if not placedCategories[cat.key] then
+                table.insert(unplacedCats, cat)
             end
-            if aRank then
-                return true
+        end
+        table.sort(unplacedCats, function(a, b) return a.label < b.label end)
+        for _, cat in ipairs(unplacedCats) do
+            table.insert(Discovery.unifiedTabOrder, { kind = "category", entry = cat })
+        end
+
+        -- Append unplaced specials in discovery order (already sorted alphabetically).
+        for _, special in ipairs(Discovery.specials) do
+            if not placedSpecials[special.modName] then
+                table.insert(Discovery.unifiedTabOrder, { kind = "special", entry = special })
             end
-            if bRank then
-                return false
+        end
+
+        -- Rebuild Discovery.categories in unified order for any code that still iterates it.
+        Discovery.categories = {}
+        for _, item in ipairs(Discovery.unifiedTabOrder) do
+            if item.kind == "category" then
+                table.insert(Discovery.categories, item.entry)
             end
-            return a.label < b.label
-        end)
+        end
 
         -- Build UI layouts
         for _, cat in ipairs(Discovery.categories) do
@@ -355,20 +382,20 @@ function Framework.createDiscovery(packId, config, lib)
         return SetEntryEnabled(module, enabled)
     end
 
-    --- Read a regular module option value from persisted config.
+    --- Read a module storage value from persisted config.
     --- @param module table Discovered regular module entry.
-    --- @param configKey string|table Option key/path.
+    --- @param aliasOrKey string|table Storage alias or raw config key/path.
     --- @return any value
-    function Discovery.getOptionValue(module, configKey)
-        return ReadPersisted(module.mod, configKey)
+    function Discovery.getStorageValue(module, aliasOrKey)
+        return ReadPersisted(module.mod, aliasOrKey)
     end
 
-    --- Write a regular module option value to persisted config.
+    --- Write a module storage value to persisted config.
     --- @param module table Discovered regular module entry.
-    --- @param configKey string|table Option key/path.
+    --- @param aliasOrKey string|table Storage alias or raw config key/path.
     --- @param value any Value to persist.
-    function Discovery.setOptionValue(module, configKey, value)
-        WritePersisted(module.mod, configKey, value)
+    function Discovery.setStorageValue(module, aliasOrKey, value)
+        WritePersisted(module.mod, aliasOrKey, value)
     end
 
     --- Read a special module's persisted Enabled state.

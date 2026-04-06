@@ -63,7 +63,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         end
 
         -- Managed UI state for regular modules
-        for _, m in ipairs(discovery.modulesWithOptions) do
+        for _, m in ipairs(discovery.modulesWithUi) do
             local uiState = m.mod.store and m.mod.store.uiState
             if uiState and uiState.reloadFromConfig then
                 uiState.reloadFromConfig()
@@ -382,10 +382,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                     ui.SetTooltip(itemData.Tooltip)
                 end
 
-                if currentVal and m.options then
+                if currentVal and type(m.ui) == "table" and #m.ui > 0 then
                     ui.Indent()
                     local uiState = m.mod.store and m.mod.store.uiState
-                    local opts = uiState and uiState.view or _EMPTY_OPTS
                     lib.runUiStatePass({
                         name = m.name or m.id,
                         imgui = ui,
@@ -394,20 +393,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                             return lib.commitUiState(m.definition, m.mod.store, state)
                         end,
                         draw = function()
-                            for _, opt in ipairs(m.options) do
-                                if lib.isFieldVisible(opt, opts) then
-                                    ui.PushID(opt._pushId)
-                                    if opt.indent then ui.Indent() end
-                                    local currentValue = nil
-                                    if opt.configKey ~= nil then currentValue = uiState.get(opt.configKey) end
-                                    local newVal, newChg = lib.drawField(ui, opt, currentValue, winW * FIELD_MEDIUM)
-                                    if newChg and opt.configKey then
-                                        uiState.set(opt.configKey, newVal)
-                                    end
-                                    if opt.indent then ui.Unindent() end
-                                    ui.PopID()
-                                end
-                            end
+                            lib.drawUiTree(ui, m.ui, uiState, winW * FIELD_MEDIUM)
                         end,
                         onFlushed = function()
                             OnUiStateFlushed(m.definition, staging.modules[m.id])
@@ -454,29 +440,35 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local selectedTab = "Quick Setup"
 
     local cachedTabList = nil
+    local cachedQuickList = nil  -- ordered list of { kind="special"|"regular", entry=... }
     local specialQuickPassOpts = {}
     local specialTabPassOpts = {}
+
+    -- Build a lookup from category key -> modules with quick UI nodes in that category.
+    local quickModulesByCategory = {}
+    for _, m in ipairs(discovery.modulesWithQuickUi) do
+        local cat = m.category
+        quickModulesByCategory[cat] = quickModulesByCategory[cat] or {}
+        table.insert(quickModulesByCategory[cat], m)
+    end
 
     local function BuildTabList()
         if cachedTabList then return cachedTabList end
         cachedTabList = { "Quick Setup" }
-        local sidebarOrder = def and def.sidebarOrder or "special-first"
-        if sidebarOrder == "category-first" then
-            for _, cat in ipairs(discovery.categories) do
-                table.insert(cachedTabList, cat.label)
-            end
-            for _, special in ipairs(discovery.specials) do
-                table.insert(cachedTabList, special._tabLabel)
-            end
-        else
-            -- Default: special tabs before regular category tabs.
-            for _, special in ipairs(discovery.specials) do
-                table.insert(cachedTabList, special._tabLabel)
-            end
-            for _, cat in ipairs(discovery.categories) do
-                table.insert(cachedTabList, cat.label)
+        cachedQuickList = {}
+
+        for _, item in ipairs(discovery.unifiedTabOrder or {}) do
+            if item.kind == "category" then
+                table.insert(cachedTabList, item.entry.label)
+                for _, m in ipairs(quickModulesByCategory[item.entry.key] or {}) do
+                    table.insert(cachedQuickList, { kind = "regular", entry = m })
+                end
+            else
+                table.insert(cachedTabList, item.entry._tabLabel)
+                table.insert(cachedQuickList, { kind = "special", entry = item.entry })
             end
         end
+
         table.insert(cachedTabList, "Profiles")
         table.insert(cachedTabList, "Dev")
         return cachedTabList
@@ -499,7 +491,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     end
 
     local function AuditAndResyncAllUiState()
-        for _, m in ipairs(discovery.modulesWithOptions) do
+        for _, m in ipairs(discovery.modulesWithUi) do
             local uiState = m.mod.store and m.mod.store.uiState
             if uiState then
                 lib.auditAndResyncUiState(m.name or m.id or m.modName, uiState)
@@ -575,14 +567,41 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             def.renderQuickSetup(quickSetupContext)
         end
 
-        -- Quick content from special modules
-        for _, special in ipairs(discovery.specials) do
-            if staging.specials[special.modName] and special.mod.DrawQuickContent then
-                ui.Separator()
-                ui.Spacing()
-                local passOpts = specialQuickPassOpts[special.modName]
-                passOpts.draw = special.mod.DrawQuickContent
-                lib.runUiStatePass(passOpts)
+        for _, item in ipairs(cachedQuickList or {}) do
+            if item.kind == "special" then
+                local special = item.entry
+                if staging.specials[special.modName] and special.mod.DrawQuickContent then
+                    ui.Separator()
+                    ui.Spacing()
+                    local passOpts = specialQuickPassOpts[special.modName]
+                    passOpts.draw = passOpts.draw or special.mod.DrawQuickContent
+                    lib.runUiStatePass(passOpts)
+                end
+            else
+                local m = item.entry
+                if staging.modules[m.id] then
+                    ui.Separator()
+                    ui.Spacing()
+                    DrawColoredText(colors.info, m.name or m.id)
+                    ui.Spacing()
+                    local uiState = m.mod.store and m.mod.store.uiState
+                    lib.runUiStatePass({
+                        name = m.name or m.id,
+                        imgui = ui,
+                        uiState = uiState,
+                        commit = function(state)
+                            return lib.commitUiState(m.definition, m.mod.store, state)
+                        end,
+                        draw = function()
+                            for _, node in ipairs(m.quickUi or {}) do
+                                lib.drawUiNode(ui, node, uiState, winW * FIELD_MEDIUM)
+                            end
+                        end,
+                        onFlushed = function()
+                            OnUiStateFlushed(m.definition, staging.modules[m.id])
+                        end,
+                    })
+                end
             end
         end
     end
@@ -602,10 +621,12 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
         ui.Spacing()
 
-        -- Delegate tab content to the module
-        if special.mod.DrawTab then
+        -- Delegate tab content to the module or fall back to definition.ui
+        if special.mod.DrawTab or (type(special.ui) == "table" and #special.ui > 0) then
             local passOpts = specialTabPassOpts[special.modName]
-            passOpts.draw = special.mod.DrawTab
+            passOpts.draw = passOpts.draw or special.mod.DrawTab or function(ui)
+                lib.drawUiTree(ui, special.ui, special.uiState, ui.GetWindowWidth() * FIELD_MEDIUM)
+            end
             lib.runUiStatePass(passOpts)
         end
     end
