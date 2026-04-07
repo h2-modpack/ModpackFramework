@@ -6,8 +6,9 @@
 
 - [README.md](README.md) for package overview
 - [COORDINATOR_GUIDE.md](COORDINATOR_GUIDE.md) for the coordinator/runtime contract
+- [QUICK_SETUP.md](QUICK_SETUP.md) for the Quick Setup surface
 - [HASH_PROFILE_ABI.md](HASH_PROFILE_ABI.md) for hash/profile compatibility policy
-- [https://github.com/h2-modpack/ModpackLib/blob/main/MODULE_AUTHORING.md](https://github.com/h2-modpack/ModpackLib/blob/main/MODULE_AUTHORING.md) for module-side lifecycle expectations
+- [ModpackLib README.md](https://github.com/h2-modpack/adamant-ModpackLib/blob/main/README.md) for module-side lifecycle expectations
 
 ## Contribution Rules
 

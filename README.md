@@ -2,6 +2,10 @@
 
 Reusable coordinator framework for adamant modpacks.
 
+Start here for Framework documentation.
+This page links to the current coordinator and compatibility references.
+External repos and templates should link here rather than to individual Framework docs.
+
 It owns:
 - discovery
 - config hashing and profile load
@@ -11,8 +15,13 @@ It owns:
 ## Docs
 
 - [COORDINATOR_GUIDE.md](COORDINATOR_GUIDE.md)
+  Bootstrap, discovery, and coordinator-facing Framework contract.
+- [QUICK_SETUP.md](QUICK_SETUP.md)
+  Quick Setup model, coordinator quick content, module quick nodes, and runtime quick filtering.
 - [HASH_PROFILE_ABI.md](HASH_PROFILE_ABI.md)
+  Compatibility rules for hashes, profiles, aliases, defaults, and hash groups.
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+  Contributor expectations for changing Framework behavior or public contract.
 
 ## Public Contract Freeze
 

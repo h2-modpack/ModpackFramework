@@ -66,7 +66,7 @@ Optional `def` fields:
 - `groupStyle`
 - `groupStyleDefault`
 - `categoryOrder` — ordered list of category and/or special names to pin first in the sidebar. Any mix of categories and specials is supported. Entries not in the list are appended alphabetically after the pinned ones. Unknown entries are warned and ignored.
-- `renderQuickSetup(ctx)`
+- `renderQuickSetup(ctx)` — coordinator-owned Quick Setup content. See [QUICK_SETUP.md](QUICK_SETUP.md).
 
 ## Discovery
 
@@ -96,7 +96,8 @@ Hash format is canonical key-value encoding.
 Properties:
 - only non-default values are encoded
 - keys are sorted for stable output
-- field serialization is delegated to field types
+- field serialization is delegated to storage types
+- optional module `definition.hashGroups` can compress multiple small root storage values into one base62 token per group
 
 Profile load behavior:
 - writes decoded config values
@@ -136,6 +137,8 @@ Framework renders module-managed state through:
 - `lib.runUiStatePass(...)`
 - `lib.commitUiState(...)`
 
+Quick Setup has its own surface and behavior contract. See [QUICK_SETUP.md](QUICK_SETUP.md).
+
 ## Debug and Warnings
 
 Warning split:
@@ -150,5 +153,6 @@ Lib debug:
 
 ## Related Docs
 
-- [https://github.com/h2-modpack/ModpackLib/blob/main/MODULE_AUTHORING.md](https://github.com/h2-modpack/ModpackLib/blob/main/MODULE_AUTHORING.md)
+- [ModpackLib README.md](https://github.com/h2-modpack/adamant-ModpackLib/blob/main/README.md)
+- [QUICK_SETUP.md](QUICK_SETUP.md)
 - [HASH_PROFILE_ABI.md](HASH_PROFILE_ABI.md)

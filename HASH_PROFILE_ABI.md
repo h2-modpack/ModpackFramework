@@ -73,6 +73,7 @@ Treat the following as frozen after release unless you are doing deliberate comp
 - storage `default`
 - storage type `toHash(...)`
 - storage type `fromHash(...)`
+- `definition.hashGroups` keys, membership, and member order when used
 
 These are not cosmetic details. They are the wire format.
 
@@ -159,6 +160,22 @@ Changing:
 
 can change how old hashes decode or what new hashes look like.
 
+### `definition.hashGroups`
+
+When a module declares hash groups, the group surface becomes part of the wire format.
+
+Compatibility-sensitive parts are:
+- group key
+- which root aliases belong to the group
+- the order of members inside the group
+
+Reason:
+- Framework encodes grouped values under `ModuleId.groupKey`
+- member order determines bit offsets inside the packed base62 payload
+- moving a root into or out of a group changes whether it is encoded under its own alias key or under the group key
+
+So hash groups are not just a size optimization after release. They are part of the serialized ABI once shipped.
+
 ## Compatibility Classes
 
 ### Safe internal changes
@@ -190,6 +207,7 @@ These require compatibility planning:
 - changing defaults
 - changing value encoding
 - changing special `modName`
+- changing hash group key, membership, or member order
 
 ## Current Compatibility Behavior
 
@@ -199,7 +217,7 @@ Framework currently provides only limited compatibility behavior:
 - unknown keys are ignored
 - missing keys fall back to defaults
 - invalid dropdown/radio values fall back to defaults
-- invalid/unknown field types warn and degrade safely rather than crashing
+- invalid/unknown storage types warn and degrade safely rather than crashing
 - saved coordinator profiles are audited at `Framework.init(...)` and warn on unknown field keys
   inside known module/special namespaces, which helps catch likely renames
 
@@ -234,9 +252,10 @@ Policy:
 Once a module is shipped publicly:
 
 - do not rename `definition.id`
-- do not rename option `configKey`
+- do not rename storage root `alias`
+- do not casually rename `configKey` when `alias` was omitted
 - do not rename special `modName`
-- do not rename special schema `configKey`
+- do not casually change `definition.hashGroups`
 
 unless you are intentionally doing compatibility work.
 
@@ -248,7 +267,7 @@ If you change a field default:
 - note it in changelog/release notes
 - verify impact on shared hashes and saved profiles
 
-### 3. Treat field type serialization as versioned behavior
+### 3. Treat storage type serialization as versioned behavior
 
 If you change `toHash(...)` or `fromHash(...)`:
 
