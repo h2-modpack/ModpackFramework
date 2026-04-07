@@ -143,6 +143,8 @@ function MockDiscovery.create(moduleDefs, specialDefs)
             default = def.default == true,
             storage = def.storage or {},
             ui = def.ui or {},
+            hashGroups = def.hashGroups,
+            selectQuickUi = def.selectQuickUi,
             affectsRunData = def.affectsRunData == true,
             apply = def.apply,
             revert = def.revert,
@@ -151,7 +153,7 @@ function MockDiscovery.create(moduleDefs, specialDefs)
         local store = lib.createStore(persisted, definition)
         local module = {
             modName = def.modName or ("adamant-" .. def.id),
-            mod = { store = store },
+            mod = { store = store, definition = definition },
             definition = definition,
             id = definition.id,
             name = definition.name,
@@ -194,6 +196,7 @@ function MockDiscovery.create(moduleDefs, specialDefs)
             tabLabel = def.tabLabel or def.name or def.modName,
             storage = def.storage or {},
             ui = def.ui or {},
+            hashGroups = def.hashGroups,
             affectsRunData = def.affectsRunData == true,
             apply = def.apply,
             revert = def.revert,
@@ -202,7 +205,12 @@ function MockDiscovery.create(moduleDefs, specialDefs)
         local store = lib.createStore(persisted, definition)
         local special = {
             modName = def.modName,
-            mod = { store = store, DrawTab = def.DrawTab, DrawQuickContent = def.DrawQuickContent },
+            mod = {
+                store = store,
+                definition = definition,
+                DrawTab = def.DrawTab,
+                DrawQuickContent = def.DrawQuickContent,
+            },
             definition = definition,
             storage = definition.storage,
             ui = definition.ui,

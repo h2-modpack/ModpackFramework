@@ -69,6 +69,51 @@ function TestDiscovery:testRegularModulesDiscoverStorageUiAndQuickNodes()
     lu.assertEquals(discovery.categories[1].key, "Run Director")
 end
 
+function TestDiscovery:testRegularModulesDiscoverQuickNodesFromCustomTypes()
+    attachRegularModule("test-GodPoolCustom", {
+        modpack = "test-pack",
+        id = "GodPoolCustom",
+        name = "God Pool Custom",
+        category = "Run Director",
+        group = "Run Setup",
+        storage = {
+            { type = "bool", alias = "EnabledFlag", configKey = "EnabledFlag", default = false },
+        },
+        customTypes = {
+            widgets = {
+                fancyToggle = {
+                    binds = { value = { storageType = "bool" } },
+                    validate = function() end,
+                    draw = function() end,
+                },
+            },
+            layouts = {
+                fancyGroup = {
+                    validate = function() end,
+                    render = function() return true end,
+                },
+            },
+        },
+        ui = {
+            {
+                type = "fancyGroup",
+                children = {
+                    { type = "fancyToggle", binds = { value = "EnabledFlag" }, label = "Enabled", quick = true },
+                },
+            },
+        },
+        apply = function() end,
+        revert = function() end,
+    }, { Enabled = false, DebugMode = false, EnabledFlag = false })
+
+    local discovery = Framework.createDiscovery("test-pack", { DebugMode = false }, lib)
+    discovery.run()
+
+    lu.assertEquals(#discovery.modulesWithQuickUi, 1)
+    lu.assertEquals(#discovery.modulesWithQuickUi[1].quickUi, 1)
+    lu.assertEquals(discovery.modulesWithQuickUi[1].quickUi[1].type, "fancyToggle")
+end
+
 function TestDiscovery:testMissingStorageSkipsRegularModule()
     attachRegularModule("test-MissingStorage", {
         modpack = "test-pack",

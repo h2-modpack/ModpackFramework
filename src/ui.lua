@@ -567,6 +567,45 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
             def.renderQuickSetup(quickSetupContext)
         end
 
+        local function SelectQuickNodes(module)
+            local quickNodes = module.quickUi or {}
+            local selector = module.definition and module.definition.selectQuickUi
+            if type(selector) ~= "function" then
+                return quickNodes
+            end
+
+            local selected = selector(module.mod.store, module.mod.store and module.mod.store.uiState, quickNodes)
+            if selected == nil then
+                return quickNodes
+            end
+
+            local selectedSet = {}
+            if type(selected) == "string" then
+                selectedSet[selected] = true
+            elseif type(selected) == "table" then
+                for key, value in pairs(selected) do
+                    if type(key) == "number" then
+                        if type(value) == "string" and value ~= "" then
+                            selectedSet[value] = true
+                        end
+                    elseif value == true then
+                        selectedSet[tostring(key)] = true
+                    end
+                end
+            else
+                return quickNodes
+            end
+
+            local filtered = {}
+            for _, node in ipairs(quickNodes) do
+                local quickId = lib.getQuickUiNodeId(node)
+                if quickId and selectedSet[quickId] then
+                    table.insert(filtered, node)
+                end
+            end
+            return filtered
+        end
+
         for _, item in ipairs(cachedQuickList or {}) do
             if item.kind == "special" then
                 local special = item.entry
@@ -593,7 +632,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
                             return lib.commitUiState(m.definition, m.mod.store, state)
                         end,
                         draw = function()
-                            for _, node in ipairs(m.quickUi or {}) do
+                            for _, node in ipairs(SelectQuickNodes(m)) do
                                 lib.drawUiNode(ui, node, uiState, winW * FIELD_MEDIUM, m.definition.customTypes)
                             end
                         end,

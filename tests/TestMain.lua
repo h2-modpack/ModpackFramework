@@ -159,3 +159,110 @@ function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
     lu.assertStrContains(warnings[1], "[test-pack] Bravo apply failed: ")
     lu.assertStrContains(warnings[2], "[test-pack] Enable Mod toggle failed; restoring previous runtime state")
 end
+
+function TestMain:testQuickSetupCanFilterQuickCandidatesByDefinitionSelector()
+    local previousImGui = rom.ImGui
+    local checkboxLabels = {}
+
+    local function noop() end
+
+    rom.ImGui = {
+        Begin = function() return true end,
+        End = noop,
+        MenuItem = function() return true end,
+        Checkbox = function(label, current)
+            table.insert(checkboxLabels, label)
+            return current, false
+        end,
+        IsItemHovered = function() return false end,
+        SetTooltip = noop,
+        Separator = noop,
+        SameLine = noop,
+        Spacing = noop,
+        TextColored = noop,
+        GetWindowWidth = function() return 1000 end,
+        BeginChild = function() return true end,
+        EndChild = noop,
+        Selectable = function() return false end,
+        BeginCombo = function() return false end,
+        EndCombo = noop,
+        PushItemWidth = noop,
+        PopItemWidth = noop,
+        Text = noop,
+        Button = function() return false end,
+        InputText = function(_, value) return value, false end,
+        GetClipboardText = function() return nil end,
+        SetClipboardText = noop,
+        CollapsingHeader = function() return false end,
+        Indent = noop,
+        Unindent = noop,
+        PushID = noop,
+        PopID = noop,
+        PushStyleColor = noop,
+        PopStyleColor = noop,
+    }
+
+    local discovery = MockDiscovery.create({
+        {
+            modName = "Alpha",
+            id = "Alpha",
+            name = "Alpha",
+            category = "General",
+            enabled = true,
+            storage = {
+                { type = "bool", alias = "FlagA", configKey = "FlagA", default = false },
+                { type = "bool", alias = "FlagB", configKey = "FlagB", default = false },
+            },
+            ui = {
+                { type = "checkbox", binds = { value = "FlagA" }, label = "Quick A", quick = true },
+                { type = "checkbox", binds = { value = "FlagB" }, label = "Quick B", quick = true },
+            },
+            selectQuickUi = function()
+                return { "value=FlagB" }
+            end,
+            apply = function() end,
+            revert = function() end,
+        },
+    })
+    discovery.unifiedTabOrder = {
+        { kind = "category", entry = { key = "General", label = "General" } },
+    }
+
+    local hud = {
+        setModMarker = noop,
+        updateHash = noop,
+        getConfigHash = function()
+            return "hash", "fingerprint"
+        end,
+        applyConfigHash = function()
+            return true
+        end,
+    }
+
+    local theme = Framework.createTheme()
+    local def = {
+        NUM_PROFILES = 1,
+        defaultProfiles = {
+            { Name = "", Hash = "", Tooltip = "" },
+        },
+    }
+    local config = {
+        ModEnabled = true,
+        DebugMode = false,
+        Profiles = {
+            { Name = "", Hash = "", Tooltip = "" },
+        },
+    }
+
+    local builtUi = Framework.createUI(discovery, hud, theme, def, config, lib, "test-pack", "Test Window")
+    builtUi.addMenuBar()
+    local ok, err = pcall(builtUi.renderWindow)
+
+    rom.ImGui = previousImGui
+
+    lu.assertTrue(ok, tostring(err))
+    local joined = table.concat(checkboxLabels, "\n")
+    lu.assertStrContains(joined, "Enable Mod")
+    lu.assertStrContains(joined, "Quick B")
+    lu.assertNotStrContains(joined, "Quick A")
+end

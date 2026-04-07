@@ -4,6 +4,15 @@ local function makeHash(discovery)
     return Framework.createHash(discovery, { DebugMode = false }, lib, "test-pack")
 end
 
+local function assertWarningContains(fragment)
+    for _, warning in ipairs(Warnings) do
+        if string.find(warning, fragment, 1, true) then
+            return
+        end
+    end
+    lu.fail("expected warning containing '" .. fragment .. "'")
+end
+
 TestHashBase62 = {}
 
 function TestHashBase62:testRoundTrip()
@@ -141,4 +150,66 @@ function TestHashStorage:testApplyConfigHashRollsBackWhenEnableFails()
     lu.assertFalse(module.mod.store.read("EnabledFlag"))
     lu.assertEquals(applyCalls, 1)
     lu.assertEquals(revertCalls, 0)
+end
+
+function TestHashStorage:testHashGroupsRejectPackedChildAliases()
+    CaptureWarnings()
+    local discovery = MockDiscovery.create({
+        {
+            id = "GodPool",
+            default = false,
+            enabled = false,
+            hashGroups = {
+                { key = "PackedBits", "EnabledBit" },
+            },
+            storage = {
+                {
+                    type = "packedInt",
+                    alias = "PackedRoot",
+                    configKey = "PackedRoot",
+                    bits = {
+                        { alias = "EnabledBit", offset = 0, width = 1, type = "bool", default = false },
+                    },
+                },
+            },
+            values = {
+                PackedRoot = 0,
+            },
+        },
+    })
+
+    local canonical = makeHash(discovery).GetConfigHash()
+
+    lu.assertEquals(canonical, "_v=1")
+    assertWarningContains("is a packed child alias; only root storage aliases are supported")
+    RestoreWarnings()
+end
+
+function TestHashStorage:testHashGroupsAllowPackedRootAliases()
+    local discovery = MockDiscovery.create({
+        {
+            id = "GodPool",
+            default = false,
+            enabled = false,
+            hashGroups = {
+                { key = "PackedRoots", "PackedA", "PackedB" },
+            },
+            storage = {
+                { type = "packedInt", alias = "PackedA", configKey = "PackedA", width = 12, bits = {
+                    { alias = "AFlag", offset = 0, width = 1, type = "bool", default = false },
+                }},
+                { type = "packedInt", alias = "PackedB", configKey = "PackedB", width = 12, bits = {
+                    { alias = "BFlag", offset = 0, width = 1, type = "bool", default = false },
+                }},
+            },
+            values = {
+                PackedA = 3,
+                PackedB = 5,
+            },
+        },
+    })
+
+    local canonical = makeHash(discovery).GetConfigHash()
+
+    lu.assertStrContains(canonical, "GodPool.PackedRoots=")
 end

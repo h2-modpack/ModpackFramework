@@ -40,6 +40,29 @@ The hash string is used both for:
 
 That means compatibility mistakes affect both imports and saved local presets.
 
+## Hash Groups
+
+Framework also supports optional `definition.hashGroups` for compressing multiple small root storage
+values into a single base62 token in the hash surface.
+
+This is a hash-size optimization only. It does not change persisted Chalk storage.
+
+Supported members:
+- root `bool`
+- root `int`
+- root `packedInt` when the root has a derivable pack width
+
+Not supported:
+- packed child aliases inside a `packedInt`
+
+Reason:
+- packed child aliases are already subfields of a packed root
+- grouping them again at the hash layer creates overlapping ownership semantics
+
+So the intended usage is:
+- group independent small roots together
+- do not group children of an already-packed root
+
 ## Frozen ABI Surface
 
 Treat the following as frozen after release unless you are doing deliberate compatibility work:

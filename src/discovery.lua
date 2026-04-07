@@ -207,7 +207,7 @@ function Framework.createDiscovery(packId, config, lib)
                                 modName)
                         else
                             table.insert(Discovery.modulesWithUi, module)
-                            local quickUi = lib.collectQuickUiNodes(def.ui)
+                            local quickUi = lib.collectQuickUiNodes(def.ui, nil, def.customTypes)
                             if #quickUi > 0 then
                                 module.quickUi = quickUi
                                 table.insert(Discovery.modulesWithQuickUi, module)

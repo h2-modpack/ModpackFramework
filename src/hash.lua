@@ -53,6 +53,11 @@ function Framework.createHash(discovery, config, lib, packId)
                     valid = false
                     break
                 end
+                if node._isBitAlias then
+                    lib.contractWarn(packId, "hashGroups: alias '%s' in group '%s' is a packed child alias; only root storage aliases are supported", alias, key)
+                    valid = false
+                    break
+                end
                 local width = lib.getPackWidth(node)
                 if not width then
                     lib.contractWarn(packId, "hashGroups: alias '%s' in group '%s' cannot be packed (no derivable width)", alias, key)
