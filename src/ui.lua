@@ -174,7 +174,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         if category then
             InvalidateCategoryStatus(category)
         end
-        hud.updateHash()
+        hud.markHashDirty()
     end
 
     local function ToggleEntry(entry, enabled, stagingBucket, stagingKey, category)
@@ -348,7 +348,7 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
         end
         InvalidateHash()
         InvalidateCategoryStatus(category)
-        hud.updateHash()
+        hud.markHashDirty()
     end
 
     local quickSetupContext = {
@@ -997,12 +997,16 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
     local _showModWindow = false
 
     local function renderWindow()
+        hud.refreshHashIfIdle()
         if _showModWindow then
             PushTheme()
-            if ui.Begin(windowTitle, true) then
+            local shouldDraw, open = ui.Begin(windowTitle, true)
+            if shouldDraw then
                 DrawMainWindow()
-                ui.End()
-            else
+            end
+            ui.End()
+            if open == false then
+                hud.flushPendingHash()
                 _showModWindow = false
             end
             PopTheme()
@@ -1011,6 +1015,9 @@ function Framework.createUI(discovery, hud, theme, def, config, lib, packId, win
 
     local function addMenuBar()
         if ui.MenuItem("Show Mod Menu") then
+            if _showModWindow then
+                hud.flushPendingHash()
+            end
             _showModWindow = not _showModWindow
         end
     end

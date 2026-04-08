@@ -57,6 +57,16 @@ function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
         PushItemWidth = noop,
         PopItemWidth = noop,
         Text = noop,
+        TextColored = noop,
+        GetCursorPosX = function() return 0 end,
+        SetCursorPosX = noop,
+        GetStyle = function()
+            return {
+                FramePadding = { x = 4, y = 3 },
+                ItemSpacing = { x = 8, y = 4 },
+            }
+        end,
+        CalcTextSize = function(text) return #(tostring(text or "")) * 8 end,
         Button = function() return false end,
         InputText = function(_, value) return value, false end,
         GetClipboardText = function() return nil end,
@@ -110,6 +120,9 @@ function TestMain:testMasterToggleRollsBackTouchedRuntimeStateOnFailure()
         setModMarker = function(val)
             table.insert(hudMarkers, val)
         end,
+        markHashDirty = noop,
+        refreshHashIfIdle = noop,
+        flushPendingHash = noop,
         updateHash = noop,
         getConfigHash = function()
             return "hash", "fingerprint"
@@ -189,6 +202,16 @@ function TestMain:testQuickSetupCanFilterQuickCandidatesByDefinitionSelector()
         PushItemWidth = noop,
         PopItemWidth = noop,
         Text = noop,
+        TextColored = noop,
+        GetCursorPosX = function() return 0 end,
+        SetCursorPosX = noop,
+        GetStyle = function()
+            return {
+                FramePadding = { x = 4, y = 3 },
+                ItemSpacing = { x = 8, y = 4 },
+            }
+        end,
+        CalcTextSize = function(text) return #(tostring(text or "")) * 8 end,
         Button = function() return false end,
         InputText = function(_, value) return value, false end,
         GetClipboardText = function() return nil end,
@@ -230,6 +253,9 @@ function TestMain:testQuickSetupCanFilterQuickCandidatesByDefinitionSelector()
 
     local hud = {
         setModMarker = noop,
+        markHashDirty = noop,
+        refreshHashIfIdle = noop,
+        flushPendingHash = noop,
         updateHash = noop,
         getConfigHash = function()
             return "hash", "fingerprint"
@@ -265,4 +291,47 @@ function TestMain:testQuickSetupCanFilterQuickCandidatesByDefinitionSelector()
     lu.assertStrContains(joined, "Enable Mod")
     lu.assertStrContains(joined, "Quick B")
     lu.assertNotStrContains(joined, "Quick A")
+end
+
+function TestMain:testAlwaysDrawRendererFlushesPendingHashWhenHostGuiDisappears()
+    local previousGui = rom.gui
+    local guiOpen = true
+    local flushCalls = 0
+
+    rom.gui = {
+        is_open = function()
+            return guiOpen
+        end,
+    }
+
+    local packId = "flush-pack"
+    local alwaysDraw = public.getAlwaysDrawRenderer(packId)
+
+    local capturedPacks = nil
+    for index = 1, 10 do
+        local name, value = debug.getupvalue(alwaysDraw, index)
+        if name == "_packs" then
+            capturedPacks = value
+            break
+        end
+    end
+
+    local previousPack = capturedPacks and capturedPacks[packId] or nil
+    capturedPacks[packId] = {
+        hud = {
+            flushPendingHash = function()
+                flushCalls = flushCalls + 1
+            end,
+        },
+    }
+
+    alwaysDraw()
+    guiOpen = false
+    alwaysDraw()
+    alwaysDraw()
+
+    rom.gui = previousGui
+    capturedPacks[packId] = previousPack
+
+    lu.assertEquals(flushCalls, 1)
 end

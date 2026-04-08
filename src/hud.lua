@@ -21,6 +21,7 @@ function Framework.createHud(packId, packIndex, hash, theme, config, modutil)
         "Framework.createHud: game HUD globals are not ready; call Framework.init after game load")
 
     local HUD_LINE_HEIGHT = 24
+    local HASH_UPDATE_DEBOUNCE_SECONDS = 5
     local componentName = "ModpackMark_" .. packId
 
     -- =============================================================================
@@ -30,6 +31,8 @@ function Framework.createHud(packId, packIndex, hash, theme, config, modutil)
     local _, initFingerprint = hash.GetConfigHash()
     local currentHash = config.ModEnabled and initFingerprint or ""
     local displayedHash = nil
+    local hashDirty = false
+    local hashDirtyAt = nil
 
     ScreenData.HUD.ComponentData[componentName] = {
         RightOffset = 20,
@@ -80,15 +83,41 @@ function Framework.createHud(packId, packIndex, hash, theme, config, modutil)
     local function updateHash()
         local _, fingerprint = hash.GetConfigHash()
         currentHash = fingerprint
+        hashDirty = false
+        hashDirtyAt = nil
         UpdateModMark()
+    end
+
+    local function markHashDirty()
+        hashDirty = true
+        hashDirtyAt = os.clock()
+    end
+
+    local function refreshHashIfIdle()
+        if not hashDirty or not config.ModEnabled then
+            return
+        end
+        if hashDirtyAt ~= nil and (os.clock() - hashDirtyAt) >= HASH_UPDATE_DEBOUNCE_SECONDS then
+            updateHash()
+        end
+    end
+
+    local function flushPendingHash()
+        if hashDirty and config.ModEnabled then
+            updateHash()
+        end
     end
 
     local function setModMarker(enabled)
         if enabled then
             local _, fingerprint = hash.GetConfigHash()
             currentHash = fingerprint
+            hashDirty = false
+            hashDirtyAt = nil
         else
             currentHash = ""
+            hashDirty = false
+            hashDirtyAt = nil
         end
         displayedHash = nil
         UpdateModMark()
@@ -96,6 +125,9 @@ function Framework.createHud(packId, packIndex, hash, theme, config, modutil)
 
     return {
         setModMarker    = setModMarker,
+        markHashDirty   = markHashDirty,
+        refreshHashIfIdle = refreshHashIfIdle,
+        flushPendingHash = flushPendingHash,
         updateHash      = updateHash,
         getConfigHash   = hash.GetConfigHash,
         applyConfigHash = hash.ApplyConfigHash,

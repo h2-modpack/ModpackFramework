@@ -46,6 +46,8 @@ rom = {
     gui = {
         add_to_menu_bar = function() end,
         add_imgui = function() end,
+        add_always_draw_imgui = function() end,
+        is_open = function() return true end,
     },
 }
 

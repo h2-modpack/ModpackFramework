@@ -259,3 +259,32 @@ public.getMenuBar = function(packId)
         pack.ui.addMenuBar()
     end
 end
+
+--- Return a stable always-draw callback for the given pack.
+--- Call once at startup; the callback late-binds to the current pack instance.
+--- It watches the host GUI visibility and flushes pending HUD/hash work when
+--- the outer Hell2Modding GUI transitions from open to closed.
+--- @param packId string Pack identifier passed to `Framework.init(...)`.
+--- @return function render Callback suitable for `rom.gui.add_always_draw_imgui(...)`.
+public.getAlwaysDrawRenderer = function(packId)
+    local wasGuiOpen = type(rom) == "table"
+        and type(rom.gui) == "table"
+        and type(rom.gui.is_open) == "function"
+        and rom.gui.is_open() == true or false
+
+    return function()
+        local isGuiOpen = type(rom) == "table"
+            and type(rom.gui) == "table"
+            and type(rom.gui.is_open) == "function"
+            and rom.gui.is_open() == true or false
+
+        if wasGuiOpen and not isGuiOpen then
+            local pack = _packs[packId]
+            if pack and pack.hud and type(pack.hud.flushPendingHash) == "function" then
+                pack.hud.flushPendingHash()
+            end
+        end
+
+        wasGuiOpen = isGuiOpen
+    end
+end
