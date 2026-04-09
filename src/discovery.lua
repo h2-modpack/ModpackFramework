@@ -153,10 +153,25 @@ function Framework.createDiscovery(packId, config, lib)
                         lib.contractWarn(packId,
                             "%s: special module is missing public.store.uiState (managed UI state)", modName)
                     else
-                        if not mod.DrawTab and not mod.DrawQuickContent then
-                            lib.warn(packId, config.DebugMode,
-                                "%s: special module exposes neither DrawTab nor DrawQuickContent; falling back to definition.ui if present",
+                        if def.category ~= nil or def.subgroup ~= nil then
+                            lib.contractWarn(packId,
+                                "%s: special modules ignore definition.category/subgroup", modName)
+                        end
+                        if def.selectQuickUi ~= nil then
+                            lib.contractWarn(packId,
+                                "%s: special modules ignore definition.selectQuickUi; special quick content uses DrawQuickContent",
                                 modName)
+                        end
+                        if not mod.DrawTab and not mod.DrawQuickContent then
+                            if type(def.ui) == "table" and #def.ui > 0 then
+                                lib.warn(packId, config.DebugMode,
+                                    "%s: special module exposes neither DrawTab nor DrawQuickContent; falling back to definition.ui",
+                                    modName)
+                            else
+                                lib.contractWarn(packId,
+                                    "%s: special module exposes neither DrawTab nor DrawQuickContent and has no definition.ui fallback",
+                                    modName)
+                            end
                         end
                         table.insert(Discovery.specials, {
                             modName      = modName,
@@ -182,6 +197,15 @@ function Framework.createDiscovery(packId, config, lib)
                 elseif not GetStore(mod) or type(GetStore(mod).read) ~= "function" or type(GetStore(mod).write) ~= "function" then
                     lib.contractWarn(packId, "%s: module is missing public.store", modName)
                 else
+                    if def.shortName ~= nil then
+                        lib.contractWarn(packId,
+                            "%s: regular modules ignore definition.shortName", modName)
+                    end
+                    if mod.DrawTab or mod.DrawQuickContent then
+                        lib.contractWarn(packId,
+                            "%s: regular modules ignore DrawTab/DrawQuickContent; use definition.ui and quick=true nodes",
+                            modName)
+                    end
                     local cat = def.category or "General"
                     local module = {
                         modName     = modName,

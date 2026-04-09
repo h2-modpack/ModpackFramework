@@ -132,6 +132,28 @@ function TestDiscovery:testMissingStorageSkipsRegularModule()
     lu.assertStrContains(Warnings[1], "missing definition.storage")
 end
 
+function TestDiscovery:testRegularModulesWarnWhenSpecialDrawExportsArePresent()
+    local exports = attachRegularModule("test-RegularWithDrawTab", {
+        modpack = "test-pack",
+        id = "RegularWithDrawTab",
+        name = "Regular With DrawTab",
+        category = "Run Director",
+        storage = {
+            { type = "bool", alias = "EnabledFlag", configKey = "EnabledFlag", default = false },
+        },
+        ui = {},
+        apply = function() end,
+        revert = function() end,
+    }, { Enabled = false, DebugMode = false, EnabledFlag = false })
+    exports.DrawTab = function() end
+
+    local discovery = Framework.createDiscovery("test-pack", { DebugMode = false }, lib)
+    discovery.run()
+
+    lu.assertEquals(#Warnings, 1)
+    lu.assertStrContains(Warnings[1], "regular modules ignore DrawTab/DrawQuickContent")
+end
+
 function TestDiscovery:testSpecialModulesRequireStorageAndManagedUiState()
     attachSpecialModule("test-Biome", {
         modpack = "test-pack",
@@ -154,6 +176,39 @@ function TestDiscovery:testSpecialModulesRequireStorageAndManagedUiState()
     lu.assertEquals(#discovery.specials, 1)
     lu.assertNotNil(discovery.specials[1].uiState)
     lu.assertEquals(discovery.specials[1]._tabLabel, "Biome")
+end
+
+function TestDiscovery:testSpecialModulesWarnWhenNoTabQuickOrUiFallbackExists()
+    rom.mods["test-BareSpecial"] = {
+        definition = {
+            modpack = "test-pack",
+            special = true,
+            name = "Bare Special",
+            storage = {
+                { type = "bool", alias = "EnabledFlag", configKey = "EnabledFlag", default = false },
+            },
+            ui = {},
+            apply = function() end,
+            revert = function() end,
+        },
+        store = lib.createStore({ Enabled = false, DebugMode = false, EnabledFlag = false }, {
+            modpack = "test-pack",
+            special = true,
+            name = "Bare Special",
+            storage = {
+                { type = "bool", alias = "EnabledFlag", configKey = "EnabledFlag", default = false },
+            },
+            ui = {},
+            apply = function() end,
+            revert = function() end,
+        }),
+    }
+
+    local discovery = Framework.createDiscovery("test-pack", { DebugMode = false }, lib)
+    discovery.run()
+
+    lu.assertEquals(#Warnings, 1)
+    lu.assertStrContains(Warnings[1], "exposes neither DrawTab nor DrawQuickContent and has no definition.ui fallback")
 end
 
 function TestDiscovery:testUnifiedTabOrderRespectsCategoryOrderAcrossCategoriesAndSpecials()

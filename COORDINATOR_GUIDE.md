@@ -79,10 +79,17 @@ public.definition.modpack = PACK_ID
 Regular modules:
 - `definition.special` absent or false
 - discovered into category/subgroup tabs
+- use `definition.id` as the Framework hash namespace
+- hosted Quick Setup comes from `definition.ui` nodes marked `quick = true`
+- `definition.selectQuickUi(...)` may filter those quick candidates at render time
 
 Special modules:
 - `definition.special = true`
 - discovered into dedicated sidebar tabs
+- use `modName` as the Framework hash namespace
+- ignore `definition.category`, `definition.subgroup`, and `definition.selectQuickUi`
+- Quick Setup comes from `DrawQuickContent`, not quick widget collection
+- tab rendering comes from `DrawTab`, or falls back to `definition.ui` when present
 
 Lifecycle shape is inferred from:
 - `patchPlan`
